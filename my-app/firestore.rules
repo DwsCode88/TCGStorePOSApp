@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    match /cards/{cardId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /inventory/{sku} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+    
+    match /priceHistory/{sku}/history/{entry} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /sales/{saleId} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /pricingRules/{ruleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /priceCache/{cacheKey} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /systemConfig/{doc} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if request.auth.uid == userId || isAdmin();
+    }
+  }
+}
