@@ -18,14 +18,26 @@ export default function SquareSyncPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [squareAccessToken, setSquareAccessToken] = useState("");
   const [squareLocationId, setSquareLocationId] = useState("");
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    loadInventory();
-    loadSquareSettings();
+    console.log("🚀 Square page mounted");
+
+    const init = async () => {
+      try {
+        loadSquareSettings();
+        await loadInventory();
+      } catch (error) {
+        console.error("Init error:", error);
+        setLoading(false);
+      }
+    };
+
+    init();
   }, []);
 
   const loadSquareSettings = () => {
@@ -45,19 +57,27 @@ export default function SquareSyncPage() {
   const loadInventory = async () => {
     setLoading(true);
     try {
+      console.log("📦 Loading inventory...");
       const snapshot = await getDocs(collection(db, "inventory"));
+      console.log("✅ Got snapshot:", snapshot.size, "items");
+
       const loadedItems = snapshot.docs.map((doc) => ({
         ...doc.data(),
         sku: doc.id,
       })) as InventoryItem[];
 
+      console.log("📋 All items:", loadedItems.length);
+
       // Filter to labeled items (ready to list)
       const labeled = loadedItems.filter((item) => item.status === "labeled");
+      console.log("🏷️ Labeled items:", labeled.length);
+
       setItems(labeled);
       toast.success(`Loaded ${labeled.length} items ready to sync`);
     } catch (error: any) {
-      console.error("Failed:", error);
-      toast.error("Failed to load inventory");
+      console.error("❌ Failed to load:", error);
+      toast.error(`Failed to load: ${error.message}`);
+      setItems([]); // Set empty array on error
     } finally {
       setLoading(false);
     }
@@ -119,65 +139,41 @@ export default function SquareSyncPage() {
   const syncItemToSquare = async (item: InventoryItem) => {
     console.log(`📤 Syncing: ${item.cardName}`);
 
-    // Create Square catalog object
-    const catalogObject = {
-      type: "ITEM",
-      id: `#${item.sku}`,
-      item_data: {
-        name: item.cardName,
-        description: `${item.setName} - ${item.printing || "Normal"} - ${item.condition}`,
-        variations: [
-          {
-            type: "ITEM_VARIATION",
-            id: `#${item.sku}-variation`,
-            item_variation_data: {
-              item_id: `#${item.sku}`,
-              name: item.condition,
-              pricing_type: "FIXED_PRICING",
-              price_money: {
-                amount: Math.round((item.sellPrice || 0) * 100), // Convert to cents
-                currency: "USD",
-              },
-              sku: item.sku,
-            },
-          },
-        ],
-        product_type: "REGULAR",
-        skip_modifier_screen: false,
+    // Call our API route (server-side) instead of Square directly
+    const response = await fetch("/api/square/sync", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    };
-
-    // Call Square API
-    const response = await fetch(
-      "https://connect.squareup.com/v2/catalog/object",
-      {
-        method: "POST",
-        headers: {
-          "Square-Version": "2024-01-18",
-          Authorization: `Bearer ${squareAccessToken}`,
-          "Content-Type": "application/json",
+      body: JSON.stringify({
+        accessToken: squareAccessToken,
+        locationId: squareLocationId,
+        item: {
+          sku: item.sku,
+          cardName: item.cardName,
+          setName: item.setName,
+          printing: item.printing,
+          condition: item.condition,
+          sellPrice: item.sellPrice,
+          quantity: item.quantity || 1,
         },
-        body: JSON.stringify({
-          idempotency_key: item.sku,
-          object: catalogObject,
-        }),
-      },
-    );
+      }),
+    });
 
     if (!response.ok) {
       const error = await response.json();
-      console.error("Square API error:", error);
-      throw new Error(error.errors?.[0]?.detail || "Square API error");
+      console.error("Sync error:", error);
+      throw new Error(error.error || "Sync failed");
     }
 
     const result = await response.json();
-    console.log("✅ Synced:", item.cardName, "→", result.catalog_object.id);
+    console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
 
     // Update Firebase with Square ID
     await updateDoc(doc(db, "inventory", item.sku), {
       status: "listed",
-      squareItemId: result.catalog_object.id,
-      squareVariationId: result.catalog_object.item_data.variations[0].id,
+      squareItemId: result.squareItemId,
+      squareVariationId: result.squareVariationId,
       listedAt: new Date(),
       updatedAt: new Date(),
     });
@@ -189,7 +185,7 @@ export default function SquareSyncPage() {
           ? {
               ...i,
               status: "listed" as const,
-              squareItemId: result.catalog_object.id,
+              squareItemId: result.squareItemId,
             }
           : i,
       ),

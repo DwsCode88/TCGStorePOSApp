@@ -15,7 +15,7 @@ export default function LabelsPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("priced");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Label size
   const [width, setWidth] = useState(2.0);
@@ -23,6 +23,7 @@ export default function LabelsPage() {
   const [spacing, setSpacing] = useState(0.1);
   const [offsetX, setOffsetX] = useState(0); // Horizontal offset in inches
   const [offsetY, setOffsetY] = useState(0); // Vertical offset in inches
+  const [onePerPage, setOnePerPage] = useState(true); // One label per page option - default true for thermal printers
 
   // Simple Y positions (percentage from top)
   const [storeY, setStoreY] = useState(8);
@@ -71,6 +72,7 @@ export default function LabelsPage() {
         setSpacing(layout.spacing ?? 0.1);
         setOffsetX(layout.offsetX ?? 0);
         setOffsetY(layout.offsetY ?? 0);
+        setOnePerPage(layout.onePerPage ?? true);
         console.log("✅ Loaded saved layout");
       } catch (e) {
         console.error("Failed to load layout:", e);
@@ -98,6 +100,7 @@ export default function LabelsPage() {
       spacing,
       offsetX,
       offsetY,
+      onePerPage,
     };
     localStorage.setItem("labelLayout", JSON.stringify(layout));
     toast.success("Layout saved! It will load automatically next time.");
@@ -124,6 +127,7 @@ export default function LabelsPage() {
       setSpacing(0.1);
       setOffsetX(0);
       setOffsetY(0);
+      setOnePerPage(true);
       toast.success("Layout reset to defaults");
     }
   };
@@ -131,11 +135,38 @@ export default function LabelsPage() {
   const loadInventory = async () => {
     setLoading(true);
     try {
+      console.log("📦 Loading inventory from Firebase...");
       const snapshot = await getDocs(collection(db, "inventory"));
       const loadedItems = snapshot.docs.map((doc) => ({
         ...doc.data(),
         sku: doc.id,
       })) as InventoryItem[];
+
+      console.log(`\n📊 INVENTORY STATUS BREAKDOWN:`);
+      console.log(`Total items in database: ${loadedItems.length}`);
+
+      const statusCount: Record<string, number> = {};
+      loadedItems.forEach((item) => {
+        const status = item.status || "unknown";
+        statusCount[status] = (statusCount[status] || 0) + 1;
+      });
+
+      Object.entries(statusCount).forEach(([status, count]) => {
+        console.log(`  - ${status}: ${count} items`);
+      });
+
+      console.log(`\nAll items in database:`);
+      loadedItems.forEach((item, i) => {
+        console.log(
+          `  ${i + 1}. ${item.cardName} (${item.sku}) - Status: ${item.status || "NO STATUS"}`,
+        );
+      });
+
+      console.log(`\n🔍 Current status filter: "${statusFilter}"`);
+      console.log(
+        `Items that match filter: ${loadedItems.filter((i) => statusFilter === "all" || i.status === statusFilter).length}\n`,
+      );
+
       setItems(
         loadedItems.sort((a, b) => {
           if (a.status === "priced" && b.status !== "priced") return -1;
@@ -143,7 +174,7 @@ export default function LabelsPage() {
           return 0;
         }),
       );
-      toast.success(`Loaded ${loadedItems.length} items`);
+      toast.success(`Loaded ${loadedItems.length} items from database`);
     } catch (error: any) {
       console.error("Failed:", error);
       toast.error("Failed to load inventory");
@@ -182,32 +213,126 @@ export default function LabelsPage() {
       return;
     }
 
+    // Show confirmation with details
+    const itemsToLabel = items.filter((item) => selectedItems.has(item.sku));
+
+    const totalLabels = itemsToLabel.reduce(
+      (sum, item) => sum + (item.quantity || 1),
+      0,
+    );
+
+    const cardList = itemsToLabel
+      .map((item, i) => {
+        const qty = item.quantity || 1;
+        return `${i + 1}. ${item.cardName} ${qty > 1 ? `(×${qty})` : ""} (${item.sku})`;
+      })
+      .join("\n");
+
+    const confirmed = confirm(
+      `Generate ${totalLabels} label${totalLabels !== 1 ? "s" : ""}?\n\n` +
+        `Items: ${itemsToLabel.length}\n` +
+        `Total labels (with quantity): ${totalLabels}\n` +
+        `Mode: ${onePerPage ? "One label per page" : "Multiple per page"}\n\n` +
+        `Cards:\n${cardList}\n\n` +
+        `Click OK to generate PDF.`,
+    );
+
+    if (!confirmed) {
+      console.log("❌ User cancelled generation");
+      return;
+    }
+
     setGenerating(true);
 
-    // Log positions RIGHT NOW
+    // DEBUG: Show what's selected
     console.clear();
-    console.log("🎯 GENERATING WITH THESE POSITIONS:");
-    console.log(`Store Y: ${storeY}% (${showStore ? "ON" : "OFF"})`);
-    console.log(`Card Y: ${cardY}%`);
-    console.log(`Set Y: ${setY}% (${showSet ? "ON" : "OFF"})`);
-    console.log(`Price Y: ${priceY}%`);
-    console.log(`Barcode Y: ${barcodeY}%`);
-    console.log(`SKU Y: ${skuY}%`);
-    console.log(`\n🎯 ZEBRA ALIGNMENT:`);
-    console.log(`X Offset: ${offsetX}" (shift right)`);
-    console.log(`Y Offset: ${offsetY}" (shift down)`);
-    console.log("================\n");
+    console.log("==========================================");
+    console.log("📊 SELECTION DEBUG");
+    console.log("==========================================");
+    console.log("Total items in inventory:", items.length);
+    console.log(
+      'Items with status "priced":',
+      items.filter((i) => i.status === "priced").length,
+    );
+    console.log("Selected item SKUs:", Array.from(selectedItems));
+    console.log("Number selected:", selectedItems.size);
+    console.log("");
+
+    console.log("🏷️ Items that match selection:");
+    if (itemsToLabel.length === 0) {
+      console.error("❌ NO ITEMS MATCHED! This means:");
+      console.error("   - Selected SKUs dont exist in items array");
+      console.error("   - Or filter is not working");
+      console.log(
+        "   All item SKUs:",
+        items.map((i) => i.sku),
+      );
+    } else {
+      itemsToLabel.forEach((item, i) => {
+        console.log(
+          `  ${i + 1}. ${item.cardName} (${item.sku}) - Status: ${item.status}`,
+        );
+      });
+    }
+    console.log("");
+    console.log("==========================================");
+    console.log("");
+
+    if (itemsToLabel.length === 0) {
+      toast.error("No items matched selection! Check console for details.");
+      setGenerating(false);
+      return;
+    }
+
+    // Expand items by quantity - if quantity is 5, create 5 copies for labeling
+    const expandedItems: InventoryItem[] = [];
+    itemsToLabel.forEach((item) => {
+      const qty = item.quantity || 1;
+      for (let i = 0; i < qty; i++) {
+        expandedItems.push(item);
+      }
+    });
+
+    console.log("🔢 QUANTITY EXPANSION:");
+    console.log(`  Original items selected: ${itemsToLabel.length}`);
+    console.log(
+      `  Total labels after quantity expansion: ${expandedItems.length}`,
+    );
+    itemsToLabel.forEach((item) => {
+      if ((item.quantity || 1) > 1) {
+        console.log(
+          `  - ${item.cardName}: quantity ${item.quantity} → ${item.quantity} labels`,
+        );
+      }
+    });
+    console.log("");
 
     try {
-      const itemsToLabel = items.filter((item) => selectedItems.has(item.sku));
-      toast.loading(`Generating ${itemsToLabel.length} labels...`);
+      toast.loading(
+        `Generating ${expandedItems.length} labels (${itemsToLabel.length} items × quantity)...`,
+      );
 
       // Generate PDF RIGHT HERE inline
       const labelWidthWithMargin = width + spacing;
       const labelHeightWithMargin = height + spacing;
-      const labelsPerRow = Math.floor(8.5 / labelWidthWithMargin);
-      const labelsPerCol = Math.floor(11 / labelHeightWithMargin);
-      const labelsPerPage = labelsPerRow * labelsPerCol;
+
+      let labelsPerRow, labelsPerCol, labelsPerPage;
+
+      if (onePerPage) {
+        // One label per page
+        labelsPerRow = 1;
+        labelsPerCol = 1;
+        labelsPerPage = 1;
+        console.log("📄 ONE LABEL PER PAGE mode");
+      } else {
+        // Multiple labels per page
+        labelsPerRow = Math.floor(8.5 / labelWidthWithMargin);
+        labelsPerCol = Math.floor(11 / labelHeightWithMargin);
+        labelsPerPage = labelsPerRow * labelsPerCol;
+        console.log(
+          `📄 ${labelsPerRow}×${labelsPerCol} = ${labelsPerPage} labels per page`,
+        );
+      }
 
       const pdf = new jsPDF({
         orientation: "portrait",
@@ -215,19 +340,45 @@ export default function LabelsPage() {
         format: "letter",
       });
 
-      for (let i = 0; i < itemsToLabel.length; i++) {
-        if (i > 0 && i % labelsPerPage === 0) {
-          pdf.addPage();
+      console.log(`\n📝 Generating ${expandedItems.length} labels...\n`);
+
+      let pagesCreated = 0;
+
+      for (let i = 0; i < expandedItems.length; i++) {
+        if (i > 0) {
+          if (onePerPage) {
+            // Always add new page for each label
+            pdf.addPage();
+            pagesCreated++;
+            console.log(
+              `  📄 Added page ${pagesCreated + 1} for label ${i + 1}`,
+            );
+          } else if (i % labelsPerPage === 0) {
+            // Add page when sheet is full
+            pdf.addPage();
+            pagesCreated++;
+            console.log(`  📄 Added page ${pagesCreated + 1} (sheet full)`);
+          }
+        } else {
+          pagesCreated = 1; // First page
         }
 
-        const item = itemsToLabel[i];
-        const labelIndex = i % labelsPerPage;
-        const row = Math.floor(labelIndex / labelsPerRow);
-        const col = labelIndex % labelsPerRow;
+        const item = expandedItems[i];
 
-        // Apply offsets to center content on physical label
-        const labelX = col * labelWidthWithMargin + offsetX;
-        const labelY = row * labelHeightWithMargin + offsetY;
+        let labelX, labelY;
+
+        if (onePerPage) {
+          // One label per page - always at top-left + offsets
+          labelX = offsetX;
+          labelY = offsetY;
+        } else {
+          // Multiple per page - calculate grid position
+          const labelIndex = i % labelsPerPage;
+          const row = Math.floor(labelIndex / labelsPerRow);
+          const col = labelIndex % labelsPerRow;
+          labelX = col * labelWidthWithMargin + offsetX;
+          labelY = row * labelHeightWithMargin + offsetY;
+        }
 
         const leftMargin = 0.1; // 0.1 inches from left edge
 
@@ -317,6 +468,18 @@ export default function LabelsPage() {
         console.log("");
       }
 
+      console.log("==========================================");
+      console.log(`📊 PDF GENERATION SUMMARY:`);
+      console.log(`  Unique items: ${itemsToLabel.length}`);
+      console.log(
+        `  Total labels: ${expandedItems.length} (respecting quantity)`,
+      );
+      console.log(`  Total pages: ${pagesCreated}`);
+      console.log(
+        `  Mode: ${onePerPage ? "One per page" : `${labelsPerPage} per page`}`,
+      );
+      console.log("==========================================\n");
+
       const pdfBlob = pdf.output("blob");
       const url = URL.createObjectURL(pdfBlob);
       const link = document.createElement("a");
@@ -345,7 +508,9 @@ export default function LabelsPage() {
       );
 
       console.log("✅ DONE\n");
-      toast.success(`Generated ${itemsToLabel.length} labels!`);
+      toast.success(
+        `Generated ${expandedItems.length} labels from ${itemsToLabel.length} item${itemsToLabel.length !== 1 ? "s" : ""}!`,
+      );
       setSelectedItems(new Set());
     } catch (error: any) {
       console.error("Failed:", error);
@@ -375,6 +540,25 @@ export default function LabelsPage() {
           Direct control - change numbers, see results
         </p>
 
+        {/* Filter Warning */}
+        {items.length > 0 && filteredItems.length < items.length && (
+          <div className="bg-orange-100 border-2 border-orange-400 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl">⚠️</div>
+              <div>
+                <div className="font-bold text-orange-900 text-lg">
+                  Filter is hiding {items.length - filteredItems.length} items!
+                </div>
+                <div className="text-orange-800 mt-1">
+                  You have <strong>{items.length} total</strong> in database,
+                  but only <strong>{filteredItems.length} showing</strong>.
+                  Change filter to "All Items" to see everything.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Position Controls */}
           <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
@@ -396,6 +580,112 @@ export default function LabelsPage() {
               <strong>Your layout auto-saves!</strong> Click "💾 Save Layout" to
               remember these settings.
             </div>
+
+            {/* Show selected items */}
+            {selectedItems.size > 0 && (
+              <>
+                <div className="bg-green-50 border-2 border-green-400 rounded p-4 mb-4">
+                  <div className="font-bold text-green-900 mb-2 text-lg">
+                    ✅ {selectedItems.size} item
+                    {selectedItems.size !== 1 ? "s" : ""} selected for printing:
+                  </div>
+                  <div className="text-sm text-green-800 space-y-1 max-h-48 overflow-y-auto">
+                    {items
+                      .filter((item) => selectedItems.has(item.sku))
+                      .map((item, i) => {
+                        const qty = item.quantity || 1;
+                        const totalLabels = items
+                          .filter((it) => selectedItems.has(it.sku))
+                          .reduce((sum, it) => sum + (it.quantity || 1), 0);
+
+                        return (
+                          <div
+                            key={item.sku}
+                            className="flex items-center gap-2"
+                          >
+                            <span className="font-mono text-xs bg-green-200 px-2 py-1 rounded">
+                              {i + 1}
+                            </span>
+                            <span className="font-semibold">
+                              {item.cardName}
+                            </span>
+                            {qty > 1 && (
+                              <span className="text-xs font-bold bg-green-300 px-2 py-0.5 rounded">
+                                ×{qty}
+                              </span>
+                            )}
+                            <span className="text-xs text-green-600">
+                              ({item.sku})
+                            </span>
+                            <span className="text-xs text-green-700">
+                              ${(item.sellPrice || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                  {(() => {
+                    const totalLabels = items
+                      .filter((it) => selectedItems.has(it.sku))
+                      .reduce((sum, it) => sum + (it.quantity || 1), 0);
+                    return (
+                      <div className="mt-3 pt-3 border-t border-green-300">
+                        <div className="text-sm text-green-900 font-bold">
+                          📊 Total labels to generate: {totalLabels}
+                        </div>
+                        {onePerPage && (
+                          <div className="text-sm text-green-800 font-semibold mt-1">
+                            📄 Mode: One label per page → {totalLabels} pages
+                            will be generated
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Check for duplicates */}
+                {(() => {
+                  const selectedCardNames = items
+                    .filter((item) => selectedItems.has(item.sku))
+                    .map((i) => i.cardName);
+                  const uniqueNames = new Set(selectedCardNames);
+                  const hasDuplicates =
+                    uniqueNames.size < selectedCardNames.length;
+
+                  if (hasDuplicates) {
+                    const nameCount: Record<string, number> = {};
+                    selectedCardNames.forEach((name) => {
+                      nameCount[name] = (nameCount[name] || 0) + 1;
+                    });
+                    const duplicates = Object.entries(nameCount).filter(
+                      ([_, count]) => count > 1,
+                    );
+
+                    return (
+                      <div className="bg-yellow-50 border-2 border-yellow-400 rounded p-3 mb-4">
+                        <div className="font-bold text-yellow-900 mb-1">
+                          ⚠️ Duplicate Card Names Detected
+                        </div>
+                        <div className="text-sm text-yellow-800">
+                          {duplicates.map(([name, count]) => (
+                            <div key={name}>
+                              • <strong>{name}</strong>: {count} copies selected
+                              (different SKUs)
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-xs text-yellow-700 mt-2">
+                          This is OK if you want multiple labels for the same
+                          card. Each will have a unique SKU.
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </>
+            )}
 
             <div className="space-y-4">
               {/* Store */}
@@ -704,6 +994,23 @@ export default function LabelsPage() {
                     X. Too high? Increase Y.
                   </div>
                 </div>
+
+                <div className="border-t pt-2 mt-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={onePerPage}
+                      onChange={(e) => setOnePerPage(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm font-medium">
+                      📄 One label per page
+                    </span>
+                  </label>
+                  <div className="text-xs text-gray-500 mt-1 ml-6">
+                    Each label on separate page (for thermal printers)
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -728,15 +1035,29 @@ export default function LabelsPage() {
                 {selectedItems.size} selected
               </div>
               <div className="text-xs text-blue-700">
-                {filteredItems.length} available
+                {filteredItems.length} shown
               </div>
+              <div className="text-xs text-blue-600 mt-1">
+                {items.length} total in database
+              </div>
+              {filteredItems.length < items.length && (
+                <div className="text-xs text-orange-600 mt-2">
+                  ℹ️ Some items hidden by filter
+                </div>
+              )}
             </div>
 
             {/* Actions */}
             <div className="space-y-2">
-              <Button onClick={toggleAll} variant="outline" className="w-full">
+              <Button
+                onClick={toggleAll}
+                variant="outline"
+                className="w-full text-base font-semibold"
+              >
                 <CheckSquare className="w-4 h-4 mr-2" />
-                {allSelected ? "Deselect All" : "Select All"}
+                {allSelected
+                  ? `Deselect All (${filteredItems.length})`
+                  : `Select All ${filteredItems.length} Items`}
               </Button>
               <Button
                 onClick={handleGenerate}
@@ -758,9 +1079,14 @@ export default function LabelsPage() {
 
         {/* Items */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold mb-4">
+          <h2 className="text-xl font-semibold mb-2">
             Items ({filteredItems.length})
           </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            💡 <strong>Tip:</strong> Click each card to select it. Click
+            multiple cards to generate multiple labels. Selected cards show with
+            a blue checkmark.
+          </p>
           {filteredItems.length === 0 ? (
             <p className="text-center py-12 text-gray-500">No items</p>
           ) : (
@@ -778,8 +1104,15 @@ export default function LabelsPage() {
                     }`}
                   >
                     <div className="flex justify-between items-start mb-1">
-                      <div className="font-semibold text-xs truncate flex-1">
-                        {item.cardName}
+                      <div className="flex items-center gap-1 flex-1">
+                        <div className="font-semibold text-xs truncate">
+                          {item.cardName}
+                        </div>
+                        {(item.quantity || 1) > 1 && (
+                          <span className="text-xs font-bold bg-orange-200 text-orange-900 px-1.5 py-0.5 rounded flex-shrink-0">
+                            ×{item.quantity}
+                          </span>
+                        )}
                       </div>
                       {isSelected ? (
                         <CheckSquare className="w-4 h-4 text-blue-600 flex-shrink-0" />
@@ -793,6 +1126,11 @@ export default function LabelsPage() {
                     <div className="text-sm font-bold text-green-600 mt-1">
                       ${(item.sellPrice || 0).toFixed(2)}
                     </div>
+                    {(item.quantity || 1) > 1 && (
+                      <div className="text-xs text-orange-700 font-semibold mt-1">
+                        {item.quantity} labels needed
+                      </div>
+                    )}
                   </div>
                 );
               })}
