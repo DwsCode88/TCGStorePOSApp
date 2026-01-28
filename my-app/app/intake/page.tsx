@@ -76,6 +76,14 @@ export default function IntakePage() {
   const [sessionCards, setSessionCards] = useState<SessionCard[]>([]);
   const [showConditionModal, setShowConditionModal] = useState(false);
   const [tempSelectedCard, setTempSelectedCard] = useState<any>(null);
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualCardData, setManualCardData] = useState({
+    name: "",
+    setName: "",
+    number: "",
+    rarity: "",
+    marketPrice: "",
+  });
 
   // Pricing settings with defaults (stored as percentages)
   const [conditionBuyPercents, setConditionBuyPercents] = useState({
@@ -202,45 +210,80 @@ export default function IntakePage() {
       const breakdown = await getPricingBreakdown(market, acqType, cond);
       console.log("💰 Breakdown from Firebase:", breakdown);
 
-      setCostBasis(breakdown.costBasis);
-      setSuggestedPrice(breakdown.sellPrice);
-      setProfit(breakdown.profit);
-      form.setValue("costBasis", breakdown.costBasis);
-    } catch (error) {
-      console.log("⚠️ Firebase pricing failed, using fallback with settings");
+      // Check if Firebase returned condition-aware pricing
+      // If costBasis seems wrong (not matching our condition %), recalculate
+      const normalizedCond = cond.toUpperCase().trim();
+      const expectedBuyPercent =
+        conditionBuyPercents[
+          normalizedCond as keyof typeof conditionBuyPercents
+        ] || conditionBuyPercents.NM;
+      const expectedCost = market * (expectedBuyPercent / 100);
 
-      // Get buy percent for condition - normalize condition string
+      console.log("🔍 Validating Firebase result:", {
+        firebaseCost: breakdown.costBasis,
+        expectedCost: expectedCost,
+        condition: normalizedCond,
+        expectedPercent: expectedBuyPercent,
+      });
+
+      // If Firebase result is off by more than 1%, use local calculation
+      const percentDiff =
+        Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
+      console.log("📊 Difference from expected:", percentDiff + "%");
+
+      if (percentDiff > 1) {
+        console.log(
+          "⚠️ Firebase pricing not condition-aware, using local settings",
+        );
+
+        let localCost = 0;
+        if (acqType === "buy") {
+          localCost = market * (expectedBuyPercent / 100);
+        } else if (acqType === "trade") {
+          localCost = market * ((expectedBuyPercent + 5) / 100);
+        }
+
+        const localSell = localCost * (1 + sellMarkupPercent / 100);
+        const localProfit = localSell - localCost;
+
+        console.log("💰 Using local calculation:", {
+          buyPrice: localCost,
+          sellPrice: localSell,
+          profit: localProfit,
+        });
+
+        setCostBasis(localCost);
+        setSuggestedPrice(localSell);
+        setProfit(localProfit);
+        form.setValue("costBasis", localCost);
+      } else {
+        console.log("✅ Using Firebase pricing (matches expected)");
+        setCostBasis(breakdown.costBasis);
+        setSuggestedPrice(breakdown.sellPrice);
+        setProfit(breakdown.profit);
+        form.setValue("costBasis", breakdown.costBasis);
+      }
+    } catch (error) {
+      console.log("⚠️ Firebase pricing failed, using local settings");
+
       const normalizedCond = cond.toUpperCase().trim();
       const buyPercent =
         conditionBuyPercents[
           normalizedCond as keyof typeof conditionBuyPercents
         ] || conditionBuyPercents.NM;
 
-      console.log("💰 Condition lookup:", {
-        original: cond,
-        normalized: normalizedCond,
-        buyPercent: buyPercent,
-        availableKeys: Object.keys(conditionBuyPercents),
-      });
-
       let fallbackCost = 0;
       if (acqType === "buy") {
-        fallbackCost = market * (buyPercent / 100); // Convert percent to decimal
+        fallbackCost = market * (buyPercent / 100);
       } else if (acqType === "trade") {
-        fallbackCost = market * ((buyPercent + 5) / 100); // Trade is 5% more
+        fallbackCost = market * ((buyPercent + 5) / 100);
       }
-      // pull = 0 cost
 
-      // Sell price uses markup percent
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
       const fallbackProfit = fallbackSell - fallbackCost;
 
-      console.log("💰 Fallback pricing calculated:", {
-        condition: normalizedCond,
-        buyPercent: buyPercent,
-        marketPrice: market,
+      console.log("💰 Local fallback calculation:", {
         buyPrice: fallbackCost,
-        sellMarkupPercent: sellMarkupPercent,
         sellPrice: fallbackSell,
         profit: fallbackProfit,
       });
@@ -249,13 +292,6 @@ export default function IntakePage() {
       setSuggestedPrice(fallbackSell);
       setProfit(fallbackProfit);
       form.setValue("costBasis", fallbackCost);
-
-      console.log(
-        "💰 State updated - costBasis:",
-        fallbackCost,
-        "suggestedPrice:",
-        fallbackSell,
-      );
     }
   };
 
@@ -272,6 +308,57 @@ export default function IntakePage() {
       console.error("❌ Error selecting card:", error);
       toast.error("Error loading card details");
     }
+  };
+
+  const handleManualEntry = () => {
+    setShowManualEntry(true);
+  };
+
+  const handleManualSubmit = () => {
+    if (!manualCardData.name || !manualCardData.marketPrice) {
+      toast.error("Card name and market price are required");
+      return;
+    }
+
+    const price = parseFloat(manualCardData.marketPrice);
+    if (isNaN(price) || price <= 0) {
+      toast.error("Please enter a valid market price");
+      return;
+    }
+
+    // Create a card object from manual data
+    const manualCard = {
+      id: `manual-${Date.now()}`,
+      name: manualCardData.name,
+      setName: manualCardData.setName || "Unknown Set",
+      number: manualCardData.number || "",
+      rarity: manualCardData.rarity || "",
+      game: gameFilter,
+      imageUrl: null,
+      variants: [
+        {
+          price: price,
+          condition: "NM",
+          printing: "Normal",
+        },
+      ],
+    };
+
+    setTempSelectedCard(manualCard);
+    setShowManualEntry(false);
+    setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
+    setShowConditionModal(true);
+
+    // Reset manual form
+    setManualCardData({
+      name: "",
+      setName: "",
+      number: "",
+      rarity: "",
+      marketPrice: "",
+    });
+
+    toast.success("Manual card added");
   };
 
   const handleConditionSelected = async (selectedCondition: string) => {
@@ -357,15 +444,34 @@ export default function IntakePage() {
       "Market price:",
       marketPrice,
     );
+    console.log("📊 Current state before update:", {
+      costBasis,
+      suggestedPrice,
+      profit,
+      currentCondition: form.getValues("condition"),
+    });
+
     form.setValue("condition", condition);
+
     if (marketPrice > 0) {
+      console.log("💰 About to call updatePricing with:", {
+        market: marketPrice,
+        acqType: form.getValues("acquisitionType"),
+        condition: condition,
+      });
+
       await updatePricing(
         marketPrice,
         form.getValues("acquisitionType"),
         condition,
       );
-      // Log the updated values (they'll be in the next render)
-      console.log("✅ Pricing update triggered for condition:", condition);
+
+      console.log("📊 State after updatePricing:", {
+        costBasis,
+        suggestedPrice,
+        profit,
+        condition,
+      });
     } else {
       console.warn("⚠️ Cannot update pricing - market price is 0");
     }
@@ -587,6 +693,19 @@ export default function IntakePage() {
               {loading ? "Searching..." : "Search"}
             </Button>
 
+            <div className="text-center mb-6">
+              <span className="text-gray-500 text-sm">OR</span>
+            </div>
+
+            <Button
+              onClick={handleManualEntry}
+              variant="outline"
+              size="lg"
+              className="w-full mb-6"
+            >
+              📝 Manual Entry from TCGplayer
+            </Button>
+
             {searchResults.length > 0 && (
               <div>
                 <h3 className="font-medium mb-3">
@@ -698,6 +817,149 @@ export default function IntakePage() {
               >
                 Cancel
               </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Manual Entry Modal */}
+        {showManualEntry && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <h2 className="text-2xl font-bold mb-2">
+                Manual Entry from TCGplayer
+              </h2>
+              <p className="text-gray-600 mb-6">
+                Enter card details and market price from TCGplayer
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Card Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={manualCardData.name}
+                    onChange={(e) =>
+                      setManualCardData({
+                        ...manualCardData,
+                        name: e.target.value,
+                      })
+                    }
+                    placeholder="e.g., Monkey.D.Luffy"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Set Name
+                  </label>
+                  <input
+                    type="text"
+                    value={manualCardData.setName}
+                    onChange={(e) =>
+                      setManualCardData({
+                        ...manualCardData,
+                        setName: e.target.value,
+                      })
+                    }
+                    placeholder="e.g., Romance Dawn"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Card Number
+                    </label>
+                    <input
+                      type="text"
+                      value={manualCardData.number}
+                      onChange={(e) =>
+                        setManualCardData({
+                          ...manualCardData,
+                          number: e.target.value,
+                        })
+                      }
+                      placeholder="e.g., OP01-001"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Rarity
+                    </label>
+                    <input
+                      type="text"
+                      value={manualCardData.rarity}
+                      onChange={(e) =>
+                        setManualCardData({
+                          ...manualCardData,
+                          rarity: e.target.value,
+                        })
+                      }
+                      placeholder="e.g., SR, R, C"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Market Price (from TCGplayer) *
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-semibold">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={manualCardData.marketPrice}
+                      onChange={(e) =>
+                        setManualCardData({
+                          ...manualCardData,
+                          marketPrice: e.target.value,
+                        })
+                      }
+                      placeholder="0.00"
+                      className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter the current market price from TCGplayer
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <Button
+                  onClick={handleManualSubmit}
+                  className="flex-1 bg-green-600 hover:bg-green-700"
+                  size="lg"
+                >
+                  Continue
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowManualEntry(false);
+                    setManualCardData({
+                      name: "",
+                      setName: "",
+                      number: "",
+                      rarity: "",
+                      marketPrice: "",
+                    });
+                  }}
+                  variant="outline"
+                  size="lg"
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
         )}
