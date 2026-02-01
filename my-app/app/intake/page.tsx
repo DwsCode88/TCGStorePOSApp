@@ -13,6 +13,8 @@ import {
   type APIProvider,
 } from "@/lib/card-api-adapter";
 import { createInventoryItem } from "@/lib/firebase/inventory";
+import { collection, getDocs, addDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import {
   calculateCostBasis,
   calculateSellPrice,
@@ -38,11 +40,12 @@ const intakeSchema = z.object({
   condition: z.string().min(1, "Condition is required"),
   printing: z.string().min(1, "Printing is required"),
   language: z.string().default("English"),
-  acquisitionType: z.enum(["buy", "trade", "pull"]),
+  acquisitionType: z.enum(["buy", "trade", "pull", "consignment"]),
   costBasis: z.number().min(0, "Cost basis must be positive"),
   quantity: z.number().int().min(1, "Quantity must be at least 1"),
   location: z.string().min(1, "Location is required"),
   notes: z.string().optional(),
+  consignorPayoutPercent: z.number().optional(),
 });
 
 type IntakeFormData = z.infer<typeof intakeSchema>;
@@ -58,9 +61,7 @@ interface SessionCard {
 
 export default function IntakePage() {
   const [apiProvider, setApiProviderState] = useState<APIProvider | null>(null);
-  const [availableProviders, setAvailableProviders] = useState<APIProvider[]>(
-    [],
-  );
+  const [availableProviders, setAvailableProviders] = useState<APIProvider[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [gameFilter, setGameFilter] = useState("onepiece");
@@ -78,11 +79,19 @@ export default function IntakePage() {
   const [tempSelectedCard, setTempSelectedCard] = useState<any>(null);
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualCardData, setManualCardData] = useState({
-    name: "",
-    setName: "",
-    number: "",
-    rarity: "",
-    marketPrice: "",
+    name: '',
+    setName: '',
+    number: '',
+    rarity: '',
+    marketPrice: '',
+  });
+  const [customers, setCustomers] = useState<Array<{id: string; name: string; phone: string; email: string}>>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({
+    name: '',
+    phone: '',
+    email: '',
   });
 
   // Pricing settings with defaults (stored as percentages)
@@ -95,22 +104,46 @@ export default function IntakePage() {
   });
   const [sellMarkupPercent, setSellMarkupPercent] = useState(40);
 
-  // Load settings from localStorage on mount
+  // Load settings and customers from localStorage/Firebase on mount
   useEffect(() => {
-    const savedBuyPercents = localStorage.getItem("conditionBuyPercents");
-    const savedMarkup = localStorage.getItem("sellMarkupPercent");
-
+    const savedBuyPercents = localStorage.getItem('conditionBuyPercents');
+    const savedMarkup = localStorage.getItem('sellMarkupPercent');
+    
     if (savedBuyPercents) {
       const loaded = JSON.parse(savedBuyPercents);
       setConditionBuyPercents(loaded);
-      console.log("✅ Loaded buy percents:", loaded);
+      console.log('✅ Loaded buy percents:', loaded);
     }
     if (savedMarkup) {
       const loaded = parseFloat(savedMarkup);
       setSellMarkupPercent(loaded);
-      console.log("✅ Loaded markup percent:", loaded);
+      console.log('✅ Loaded markup percent:', loaded);
     }
+    
+    // Load customers from Firebase
+    const loadCustomers = async () => {
+      try {
+        const snapshot = await getDocs(collection(db, 'customers'));
+        const customerList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name,
+          phone: doc.data().phone || '',
+          email: doc.data().email || '',
+        }));
+        setCustomers(customerList);
+        console.log('✅ Loaded customers:', customerList);
+      } catch (error) {
+        console.error('Error loading customers:', error);
+      }
+    };
+    
+    loadCustomers();
   }, []);
+
+  // Debug modal state
+  useEffect(() => {
+    console.log('🔔 showAddCustomerModal changed:', showAddCustomerModal);
+  }, [showAddCustomerModal]);
 
   const form = useForm<IntakeFormData>({
     resolver: zodResolver(intakeSchema),
@@ -122,6 +155,7 @@ export default function IntakePage() {
       printing: "Normal",
       location: "A-1",
       costBasis: 0,
+      consignorPayoutPercent: 60,
     },
   });
 
@@ -145,12 +179,12 @@ export default function IntakePage() {
   // Debug: Log when prices change
   useEffect(() => {
     if (step === 2 && selectedCard) {
-      console.log("📊 Prices updated:", {
+      console.log('📊 Prices updated:', {
         market: marketPrice,
         buyPrice: costBasis,
         sellPrice: suggestedPrice,
         profit: profit,
-        condition: form.getValues("condition"),
+        condition: form.getValues("condition")
       });
     }
   }, [costBasis, suggestedPrice, profit, step]);
@@ -162,6 +196,75 @@ export default function IntakePage() {
     setSearchResults([]);
     setSelectedCard(null);
     setStep(1);
+  };
+
+  const handleAddCustomer = async () => {
+    alert('🎯 Button clicked! Check console...');
+    console.log('🎯 handleAddCustomer called');
+    console.log('Customer data:', newCustomer);
+    console.log('Current customers:', customers);
+    console.log('Firebase db:', typeof db);
+    
+    if (!newCustomer.name) {
+      console.log('❌ Name is missing');
+      alert('❌ Name is required!');
+      toast.error("Customer name is required");
+      return;
+    }
+
+    if (!newCustomer.phone && !newCustomer.email) {
+      console.log('❌ Phone and email are both missing');
+      alert('❌ Need phone or email!');
+      toast.error("Please provide phone or email");
+      return;
+    }
+
+    try {
+      console.log('💾 Adding customer to Firebase...');
+      console.log('Customer data to save:', newCustomer);
+      
+      const customerData = {
+        name: newCustomer.name,
+        phone: newCustomer.phone || '',
+        email: newCustomer.email || '',
+        createdAt: new Date().toISOString(),
+        totalConsignments: 0,
+        totalOwed: 0,
+      };
+      
+      console.log('Final customer data:', customerData);
+      
+      const docRef = await addDoc(collection(db, 'customers'), customerData);
+
+      console.log('✅ Customer added with ID:', docRef.id);
+      alert('✅ Customer saved to Firebase! ID: ' + docRef.id);
+      
+      // Add to local state
+      const newCustomerData = {
+        id: docRef.id,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        email: newCustomer.email,
+      };
+      
+      console.log('📝 Adding to local state:', newCustomerData);
+      setCustomers([...customers, newCustomerData]);
+      setSelectedCustomerId(docRef.id);
+      console.log('✅ Selected customer ID:', docRef.id);
+      
+      // Reset form
+      setNewCustomer({ name: '', phone: '', email: '' });
+      setShowAddCustomerModal(false);
+      console.log('✅ Modal closed');
+      
+      toast.success(`Customer "${newCustomer.name}" added!`);
+      alert('✅ All done! Customer should be in dropdown now.');
+    } catch (error: any) {
+      console.error('❌ Error adding customer:', error);
+      console.error('Error message:', error.message);
+      alert('❌ ERROR: ' + error.message);
+      toast.error(`Failed to add customer: ${error.message}`);
+    }
   };
 
   const handleSearch = async () => {
@@ -202,90 +305,81 @@ export default function IntakePage() {
     acqType: "buy" | "trade" | "pull",
     cond: string,
   ) => {
-    console.log("💰 updatePricing called:", { market, acqType, cond });
-    console.log("💰 Current buy percents:", conditionBuyPercents);
-    console.log("💰 Current markup percent:", sellMarkupPercent);
-
+    console.log('💰 updatePricing called:', { market, acqType, cond });
+    console.log('💰 Current buy percents:', conditionBuyPercents);
+    console.log('💰 Current markup percent:', sellMarkupPercent);
+    
     try {
       const breakdown = await getPricingBreakdown(market, acqType, cond);
-      console.log("💰 Breakdown from Firebase:", breakdown);
-
+      console.log('💰 Breakdown from Firebase:', breakdown);
+      
       // Check if Firebase returned condition-aware pricing
       // If costBasis seems wrong (not matching our condition %), recalculate
       const normalizedCond = cond.toUpperCase().trim();
-      const expectedBuyPercent =
-        conditionBuyPercents[
-          normalizedCond as keyof typeof conditionBuyPercents
-        ] || conditionBuyPercents.NM;
+      const expectedBuyPercent = conditionBuyPercents[normalizedCond as keyof typeof conditionBuyPercents] || conditionBuyPercents.NM;
       const expectedCost = market * (expectedBuyPercent / 100);
-
-      console.log("🔍 Validating Firebase result:", {
+      
+      console.log('🔍 Validating Firebase result:', {
         firebaseCost: breakdown.costBasis,
         expectedCost: expectedCost,
         condition: normalizedCond,
-        expectedPercent: expectedBuyPercent,
+        expectedPercent: expectedBuyPercent
       });
-
+      
       // If Firebase result is off by more than 1%, use local calculation
-      const percentDiff =
-        Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
-      console.log("📊 Difference from expected:", percentDiff + "%");
-
+      const percentDiff = Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
+      console.log('📊 Difference from expected:', percentDiff + '%');
+      
       if (percentDiff > 1) {
-        console.log(
-          "⚠️ Firebase pricing not condition-aware, using local settings",
-        );
-
+        console.log('⚠️ Firebase pricing not condition-aware, using local settings');
+        
         let localCost = 0;
         if (acqType === "buy") {
           localCost = market * (expectedBuyPercent / 100);
         } else if (acqType === "trade") {
           localCost = market * ((expectedBuyPercent + 5) / 100);
         }
-
+        
         const localSell = localCost * (1 + sellMarkupPercent / 100);
         const localProfit = localSell - localCost;
-
-        console.log("💰 Using local calculation:", {
+        
+        console.log('💰 Using local calculation:', {
           buyPrice: localCost,
           sellPrice: localSell,
-          profit: localProfit,
+          profit: localProfit
         });
-
+        
         setCostBasis(localCost);
         setSuggestedPrice(localSell);
         setProfit(localProfit);
         form.setValue("costBasis", localCost);
       } else {
-        console.log("✅ Using Firebase pricing (matches expected)");
+        console.log('✅ Using Firebase pricing (matches expected)');
         setCostBasis(breakdown.costBasis);
         setSuggestedPrice(breakdown.sellPrice);
         setProfit(breakdown.profit);
         form.setValue("costBasis", breakdown.costBasis);
       }
     } catch (error) {
-      console.log("⚠️ Firebase pricing failed, using local settings");
-
+      console.log('⚠️ Firebase pricing failed, using local settings');
+      
       const normalizedCond = cond.toUpperCase().trim();
-      const buyPercent =
-        conditionBuyPercents[
-          normalizedCond as keyof typeof conditionBuyPercents
-        ] || conditionBuyPercents.NM;
-
+      const buyPercent = conditionBuyPercents[normalizedCond as keyof typeof conditionBuyPercents] || conditionBuyPercents.NM;
+      
       let fallbackCost = 0;
       if (acqType === "buy") {
         fallbackCost = market * (buyPercent / 100);
       } else if (acqType === "trade") {
         fallbackCost = market * ((buyPercent + 5) / 100);
       }
-
+      
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
       const fallbackProfit = fallbackSell - fallbackCost;
-
-      console.log("💰 Local fallback calculation:", {
+      
+      console.log('💰 Local fallback calculation:', {
         buyPrice: fallbackCost,
         sellPrice: fallbackSell,
-        profit: fallbackProfit,
+        profit: fallbackProfit
       });
 
       setCostBasis(fallbackCost);
@@ -298,10 +392,10 @@ export default function IntakePage() {
   const handleSelectCard = async (card: any) => {
     try {
       setTempSelectedCard(card);
-
+      
       // Always show all conditions - employee needs to pick based on physical card
       setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
-
+      
       // Show condition selection modal
       setShowConditionModal(true);
     } catch (error: any) {
@@ -335,35 +429,33 @@ export default function IntakePage() {
       rarity: manualCardData.rarity || "",
       game: gameFilter,
       imageUrl: null,
-      variants: [
-        {
-          price: price,
-          condition: "NM",
-          printing: "Normal",
-        },
-      ],
+      variants: [{
+        price: price,
+        condition: "NM",
+        printing: "Normal"
+      }]
     };
 
     setTempSelectedCard(manualCard);
     setShowManualEntry(false);
     setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
     setShowConditionModal(true);
-
+    
     // Reset manual form
     setManualCardData({
-      name: "",
-      setName: "",
-      number: "",
-      rarity: "",
-      marketPrice: "",
+      name: '',
+      setName: '',
+      number: '',
+      rarity: '',
+      marketPrice: '',
     });
-
+    
     toast.success("Manual card added");
   };
 
   const handleConditionSelected = async (selectedCondition: string) => {
     if (!tempSelectedCard) return;
-
+    
     try {
       setSelectedCard(tempSelectedCard);
       setShowConditionModal(false);
@@ -378,7 +470,7 @@ export default function IntakePage() {
       let variantWithPrice = tempSelectedCard.variants?.find(
         (v: any) => v.condition === selectedCondition && v.price && v.price > 0,
       );
-
+      
       // If no exact match, use any variant with a price
       if (!variantWithPrice) {
         variantWithPrice = tempSelectedCard.variants?.find(
@@ -392,7 +484,7 @@ export default function IntakePage() {
         setMarketPrice(marketPriceFromAPI);
         form.setValue("printing", variantWithPrice.printing || "Normal");
         form.setValue("acquisitionType", "buy");
-
+        
         // Calculate buy price based on selected condition
         await updatePricing(marketPriceFromAPI, "buy", selectedCondition);
       } else {
@@ -429,7 +521,7 @@ export default function IntakePage() {
         },
       ]);
     }
-
+    
     toast.info(`Declined ${selectedCard?.name}`);
     setSelectedCard(null);
     setSearchQuery("");
@@ -438,46 +530,43 @@ export default function IntakePage() {
   };
 
   const handleConditionChange = async (condition: string) => {
-    console.log(
-      "🔄 Condition changed to:",
-      condition,
-      "Market price:",
-      marketPrice,
-    );
-    console.log("📊 Current state before update:", {
+    console.log('🔄 Condition changed to:', condition, 'Market price:', marketPrice);
+    console.log('📊 Current state before update:', {
       costBasis,
       suggestedPrice,
       profit,
-      currentCondition: form.getValues("condition"),
+      currentCondition: form.getValues("condition")
     });
-
+    
     form.setValue("condition", condition);
-
+    
     if (marketPrice > 0) {
-      console.log("💰 About to call updatePricing with:", {
+      console.log('💰 About to call updatePricing with:', {
         market: marketPrice,
         acqType: form.getValues("acquisitionType"),
-        condition: condition,
+        condition: condition
       });
-
+      
       await updatePricing(
         marketPrice,
         form.getValues("acquisitionType"),
         condition,
       );
-
-      console.log("📊 State after updatePricing:", {
+      
+      console.log('📊 State after updatePricing:', {
         costBasis,
         suggestedPrice,
         profit,
-        condition,
+        condition
       });
     } else {
-      console.warn("⚠️ Cannot update pricing - market price is 0");
+      console.warn('⚠️ Cannot update pricing - market price is 0');
     }
   };
 
   const onSubmit = async (data: IntakeFormData) => {
+    console.log('📝 Form submitted:', data);
+    
     if (!selectedCard) {
       toast.error("Please select a card");
       return;
@@ -488,9 +577,24 @@ export default function IntakePage() {
       return;
     }
 
+    // Validate consignment fields
+    if (data.acquisitionType === "consignment") {
+      if (!selectedCustomerId) {
+        console.log('❌ No customer selected for consignment');
+        toast.error("Please select a customer for consignment");
+        setLoading(false);
+        return;
+      }
+      console.log('✅ Customer selected:', selectedCustomerId);
+    }
+
     setLoading(true);
     try {
-      const sku = await createInventoryItem({
+      console.log('💾 Creating inventory item...');
+      console.log('Selected card:', selectedCard);
+      console.log('Form data:', data);
+      
+      const inventoryData = {
         ...data,
         cardName: selectedCard.name,
         setName: selectedCard.setName || "Unknown Set",
@@ -500,7 +604,47 @@ export default function IntakePage() {
         status: "priced",
         priceSource: apiProvider ? getProviderName(apiProvider) : "Unknown",
         imageUrl: selectedCard.imageUrl,
-      } as any);
+        // Consignment fields (only if consignment type)
+        ...(data.acquisitionType === "consignment" && {
+          customerId: selectedCustomerId,
+          consignorPayoutPercent: data.consignorPayoutPercent || 60,
+          consignorOwed: 0,
+          consignorPaid: false,
+          consignmentDate: new Date().toISOString(),
+        }),
+      };
+
+      console.log('📦 Inventory data to save:', inventoryData);
+
+      console.log('⏳ Calling createInventoryItem...');
+      console.log('Function exists?', typeof createInventoryItem);
+      
+      let sku;
+      try {
+        // Try using createInventoryItem first
+        const savePromise = createInventoryItem(inventoryData as any);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Save timeout after 10 seconds')), 10000)
+        );
+        
+        sku = await Promise.race([savePromise, timeoutPromise]);
+        console.log('✅ Item created with createInventoryItem, SKU:', sku);
+      } catch (createError: any) {
+        console.log('⚠️ createInventoryItem failed, trying direct Firebase save...');
+        console.log('Error was:', createError.message);
+        
+        // Fallback: Save directly to Firebase
+        const docRef = await addDoc(collection(db, 'inventory'), {
+          ...inventoryData,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        
+        sku = docRef.id;
+        console.log('✅ Item created with direct save, SKU:', sku);
+      }
+
+      console.log('✅ Item created with SKU:', sku);
 
       // Track accepted
       setSessionCards([
@@ -517,6 +661,7 @@ export default function IntakePage() {
 
       toast.success(`✅ Card added! SKU: ${sku}`);
 
+      // Reset form
       form.reset();
       setSelectedCard(null);
       setSearchQuery("");
@@ -527,11 +672,16 @@ export default function IntakePage() {
       setSuggestedPrice(0);
       setProfit(0);
       setAvailableConditions([]);
+      setSelectedCustomerId('');
       setStep(1);
     } catch (error: any) {
-      console.error("Save error:", error);
-      toast.error(`Failed to add card: ${error.message}`);
+      console.error("❌ Save error:", error);
+      console.error("Error name:", error.name);
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+      toast.error(`Failed to add card: ${error.message || 'Unknown error'}`);
     } finally {
+      console.log('🏁 Finally block - stopping loading');
       setLoading(false);
     }
   };
@@ -568,18 +718,13 @@ export default function IntakePage() {
               </div>
               <p className="text-gray-600">Make offers to buy cards</p>
               <p className="text-xs text-gray-500 mt-1">
-                Using:{" "}
-                <span className="font-semibold">
-                  {getProviderName(apiProvider)}
-                </span>
+                Using: <span className="font-semibold">{getProviderName(apiProvider)}</span>
               </p>
             </div>
 
             {availableProviders.length > 1 && (
               <div className="bg-white rounded-lg shadow-sm p-4 border">
-                <label className="block text-sm font-medium mb-2">
-                  Price Source
-                </label>
+                <label className="block text-sm font-medium mb-2">Price Source</label>
                 <div className="flex gap-2">
                   {availableProviders.map((provider) => (
                     <button
@@ -609,24 +754,16 @@ export default function IntakePage() {
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <div className="text-sm text-gray-600">Accepted</div>
-              <div className="text-2xl font-bold text-green-600">
-                {acceptedCards.length}
-              </div>
-              <div className="text-xs text-gray-500">
-                ${totalPayout.toFixed(2)}
-              </div>
+              <div className="text-2xl font-bold text-green-600">{acceptedCards.length}</div>
+              <div className="text-xs text-gray-500">${totalPayout.toFixed(2)}</div>
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <div className="text-sm text-gray-600">Declined</div>
-              <div className="text-2xl font-bold text-red-600">
-                {declinedCards.length}
-              </div>
+              <div className="text-2xl font-bold text-red-600">{declinedCards.length}</div>
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <div className="text-sm text-gray-600">Total Payout</div>
-              <div className="text-2xl font-bold text-purple-600">
-                ${totalPayout.toFixed(2)}
-              </div>
+              <div className="text-2xl font-bold text-purple-600">${totalPayout.toFixed(2)}</div>
             </div>
           </div>
         )}
@@ -657,9 +794,7 @@ export default function IntakePage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm font-medium mb-2">
-                  Card Name
-                </label>
+                <label className="block text-sm font-medium mb-2">Card Name</label>
                 <input
                   type="text"
                   value={searchQuery}
@@ -670,9 +805,7 @@ export default function IntakePage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2">
-                  Card Number
-                </label>
+                <label className="block text-sm font-medium mb-2">Card Number</label>
                 <input
                   type="text"
                   value={cardNumber}
@@ -708,9 +841,7 @@ export default function IntakePage() {
 
             {searchResults.length > 0 && (
               <div>
-                <h3 className="font-medium mb-3">
-                  Results ({searchResults.length})
-                </h3>
+                <h3 className="font-medium mb-3">Results ({searchResults.length})</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto">
                   {searchResults.map((card: any) => (
                     <div
@@ -732,23 +863,17 @@ export default function IntakePage() {
                       )}
 
                       <div className="font-semibold text-lg">{card.name}</div>
-                      <div className="text-sm text-gray-600 mt-1">
-                        {card.setName}
-                      </div>
+                      <div className="text-sm text-gray-600 mt-1">{card.setName}</div>
                       <div className="text-xs text-gray-500 mt-1">
                         {card.number && `#${card.number}`}{" "}
                         {card.rarity && `• ${card.rarity}`}
                       </div>
-                      {card.variants &&
-                      card.variants.length > 0 &&
-                      card.variants[0]?.price > 0 ? (
+                      {card.variants && card.variants.length > 0 && card.variants[0]?.price > 0 ? (
                         <div className="text-xs text-blue-600 mt-2 font-medium">
                           ${card.variants[0].price.toFixed(2)}
                         </div>
                       ) : (
-                        <div className="text-xs text-gray-500 mt-2">
-                          No price
-                        </div>
+                        <div className="text-xs text-gray-500 mt-2">No price</div>
                       )}
                     </div>
                   ))}
@@ -763,7 +888,7 @@ export default function IntakePage() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full mx-4">
               <h2 className="text-2xl font-bold mb-4">Select Condition</h2>
-
+              
               {/* Card Preview */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex gap-4">
                 {tempSelectedCard.imageUrl && (
@@ -780,9 +905,7 @@ export default function IntakePage() {
                 )}
                 <div className="flex-1">
                   <h3 className="font-bold text-lg">{tempSelectedCard.name}</h3>
-                  <p className="text-sm text-gray-600">
-                    {tempSelectedCard.setName}
-                  </p>
+                  <p className="text-sm text-gray-600">{tempSelectedCard.setName}</p>
                   <p className="text-xs text-gray-500 mt-1">
                     {tempSelectedCard.number && `#${tempSelectedCard.number}`}{" "}
                     {tempSelectedCard.rarity && `• ${tempSelectedCard.rarity}`}
@@ -825,45 +948,27 @@ export default function IntakePage() {
         {showManualEntry && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <h2 className="text-2xl font-bold mb-2">
-                Manual Entry from TCGplayer
-              </h2>
-              <p className="text-gray-600 mb-6">
-                Enter card details and market price from TCGplayer
-              </p>
+              <h2 className="text-2xl font-bold mb-2">Manual Entry from TCGplayer</h2>
+              <p className="text-gray-600 mb-6">Enter card details and market price from TCGplayer</p>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Card Name *
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Card Name *</label>
                   <input
                     type="text"
                     value={manualCardData.name}
-                    onChange={(e) =>
-                      setManualCardData({
-                        ...manualCardData,
-                        name: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setManualCardData({...manualCardData, name: e.target.value})}
                     placeholder="e.g., Monkey.D.Luffy"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Set Name
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Set Name</label>
                   <input
                     type="text"
                     value={manualCardData.setName}
-                    onChange={(e) =>
-                      setManualCardData({
-                        ...manualCardData,
-                        setName: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setManualCardData({...manualCardData, setName: e.target.value})}
                     placeholder="e.g., Romance Dawn"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
@@ -871,35 +976,21 @@ export default function IntakePage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Card Number
-                    </label>
+                    <label className="block text-sm font-medium mb-2">Card Number</label>
                     <input
                       type="text"
                       value={manualCardData.number}
-                      onChange={(e) =>
-                        setManualCardData({
-                          ...manualCardData,
-                          number: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setManualCardData({...manualCardData, number: e.target.value})}
                       placeholder="e.g., OP01-001"
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Rarity
-                    </label>
+                    <label className="block text-sm font-medium mb-2">Rarity</label>
                     <input
                       type="text"
                       value={manualCardData.rarity}
-                      onChange={(e) =>
-                        setManualCardData({
-                          ...manualCardData,
-                          rarity: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setManualCardData({...manualCardData, rarity: e.target.value})}
                       placeholder="e.g., SR, R, C"
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
@@ -907,24 +998,15 @@ export default function IntakePage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Market Price (from TCGplayer) *
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Market Price (from TCGplayer) *</label>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-semibold">
-                      $
-                    </span>
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-semibold">$</span>
                     <input
                       type="number"
                       step="0.01"
                       min="0"
                       value={manualCardData.marketPrice}
-                      onChange={(e) =>
-                        setManualCardData({
-                          ...manualCardData,
-                          marketPrice: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setManualCardData({...manualCardData, marketPrice: e.target.value})}
                       placeholder="0.00"
                       className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
                     />
@@ -947,12 +1029,112 @@ export default function IntakePage() {
                   onClick={() => {
                     setShowManualEntry(false);
                     setManualCardData({
-                      name: "",
-                      setName: "",
-                      number: "",
-                      rarity: "",
-                      marketPrice: "",
+                      name: '',
+                      setName: '',
+                      number: '',
+                      rarity: '',
+                      marketPrice: '',
                     });
+                  }}
+                  variant="outline"
+                  size="lg"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add Customer Modal */}
+        {showAddCustomerModal && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            style={{ zIndex: 9999 }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                console.log('🔘 Backdrop clicked - closing modal');
+                setShowAddCustomerModal(false);
+              }
+            }}
+          >
+            <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full border-4 border-purple-500" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-2xl font-bold mb-2 text-purple-600">➕ Add Customer</h2>
+              <p className="text-gray-600 mb-6 text-sm">Add a new consignment customer</p>
+              
+              {/* Debug indicator */}
+              <div className="bg-yellow-100 border border-yellow-400 rounded p-2 mb-4 text-xs">
+                ⚠️ DEBUG MODE: Modal is visible!
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={newCustomer.name}
+                    onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+                    placeholder="John Doe"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={newCustomer.phone}
+                    onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
+                    placeholder="555-1234"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={newCustomer.email}
+                    onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+                    placeholder="john@example.com"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  * At least phone or email is required
+                </p>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <Button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('🔘 Add Customer button in modal clicked!');
+                    handleAddCustomer();
+                  }}
+                  className="flex-1 bg-purple-600 hover:bg-purple-700"
+                  size="lg"
+                >
+                  Add Customer
+                </Button>
+                <Button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('🔘 Cancel button clicked');
+                    setShowAddCustomerModal(false);
+                    setNewCustomer({ name: '', phone: '', email: '' });
                   }}
                   variant="outline"
                   size="lg"
@@ -968,9 +1150,7 @@ export default function IntakePage() {
         {step === 2 && selectedCard && (
           <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg shadow-2xl p-8 text-white">
             <div className="text-center mb-6">
-              <div className="text-sm font-semibold text-blue-200 mb-2">
-                OFFER FOR CUSTOMER
-              </div>
+              <div className="text-sm font-semibold text-blue-200 mb-2">OFFER FOR CUSTOMER</div>
               <h2 className="text-4xl font-bold mb-2">{selectedCard.name}</h2>
               <p className="text-xl text-blue-100">{selectedCard.setName}</p>
             </div>
@@ -978,40 +1158,26 @@ export default function IntakePage() {
             <div className="grid grid-cols-3 gap-6 mb-8">
               <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
                 <div className="text-sm text-blue-200 mb-1">Market Price</div>
-                <div className="text-3xl font-bold">
-                  ${marketPrice.toFixed(2)}
-                </div>
+                <div className="text-3xl font-bold">${marketPrice.toFixed(2)}</div>
               </div>
 
               <div className="bg-white bg-opacity-30 rounded-lg p-4 text-center border-4 border-white">
-                <div className="text-sm text-blue-100 mb-1 font-semibold">
-                  WE OFFER
-                </div>
-                <div className="text-5xl font-bold text-green-300">
-                  ${costBasis.toFixed(2)}
-                </div>
+                <div className="text-sm text-blue-100 mb-1 font-semibold">WE OFFER</div>
+                <div className="text-5xl font-bold text-green-300">${costBasis.toFixed(2)}</div>
                 <div className="text-xs text-blue-200 mt-1">
-                  (
-                  {marketPrice > 0
-                    ? ((costBasis / marketPrice) * 100).toFixed(0)
-                    : 0}
-                  % of market)
+                  ({marketPrice > 0 ? ((costBasis / marketPrice) * 100).toFixed(0) : 0}% of market)
                 </div>
               </div>
 
               <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
                 <div className="text-sm text-blue-200 mb-1">Our Sell Price</div>
-                <div className="text-3xl font-bold">
-                  ${suggestedPrice.toFixed(2)}
-                </div>
+                <div className="text-3xl font-bold">${suggestedPrice.toFixed(2)}</div>
               </div>
             </div>
 
             {/* Condition Selector */}
             <div className="mb-6">
-              <div className="text-sm text-blue-200 mb-2 text-center">
-                Adjust Condition:
-              </div>
+              <div className="text-sm text-blue-200 mb-2 text-center">Adjust Condition:</div>
               <div className="flex gap-2 justify-center flex-wrap">
                 {availableConditions.map((cond) => (
                   <button
@@ -1032,15 +1198,11 @@ export default function IntakePage() {
             <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
               <div className="bg-white bg-opacity-10 rounded p-3">
                 <div className="text-blue-200">Condition</div>
-                <div className="font-semibold">
-                  {form.getValues("condition")}
-                </div>
+                <div className="font-semibold">{form.getValues("condition")}</div>
               </div>
               <div className="bg-white bg-opacity-10 rounded p-3">
                 <div className="text-blue-200">Source</div>
-                <div className="font-semibold">
-                  {getProviderName(apiProvider)}
-                </div>
+                <div className="font-semibold">{getProviderName(apiProvider)}</div>
               </div>
             </div>
 
@@ -1068,11 +1230,7 @@ export default function IntakePage() {
         {/* Step 3: Details Form */}
         {step === 3 && selectedCard && (
           <div className="bg-white rounded-lg shadow-sm p-6">
-            <Button
-              onClick={() => setStep(2)}
-              variant="outline"
-              className="mb-4"
-            >
+            <Button onClick={() => setStep(2)} variant="outline" className="mb-4">
               ← Back to Offer
             </Button>
 
@@ -1081,19 +1239,131 @@ export default function IntakePage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Printing
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Printing</label>
                   <input
                     type="text"
                     {...form.register("printing")}
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
+              </div>
+
+              {/* Acquisition Type Selector */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-2">
+                  How are you acquiring this card?
+                </label>
+                <select
+                  {...form.register("acquisitionType")}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    form.setValue("acquisitionType", newType as any);
+                    
+                    if (newType !== "consignment") {
+                      form.setValue("consignorName", "");
+                      form.setValue("consignorContact", "");
+                    }
+                    
+                    if (newType === "consignment") {
+                      setCostBasis(0);
+                    } else {
+                      updatePricing(marketPrice, newType as any, form.getValues("condition"));
+                    }
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="buy">💰 Buy (Pay Cash)</option>
+                  <option value="trade">🔄 Trade (Store Credit)</option>
+                  <option value="pull">📦 Pull (Opened Product)</option>
+                  <option value="consignment">🤝 Consignment (Sell for Customer)</option>
+                </select>
+              </div>
+
+              {/* Consignor Fields */}
+              {form.watch("acquisitionType") === "consignment" && (
+                <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-5 mb-4">
+                  <h3 className="font-semibold text-purple-900 mb-3 text-lg">
+                    🤝 Consignment Customer
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    {/* Customer Dropdown */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium">
+                          Select Customer *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            console.log('🔘 Add New Customer button clicked');
+                            setShowAddCustomerModal(true);
+                          }}
+                          className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+                        >
+                          ➕ Add New
+                        </button>
+                      </div>
+                      <select
+                        value={selectedCustomerId}
+                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white text-lg"
+                        required
+                      >
+                        <option value="">-- Select Customer --</option>
+                        {customers.map((customer) => (
+                          <option key={customer.id} value={customer.id}>
+                            {customer.name} {customer.phone && `(${customer.phone})`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Payout Percentage */}
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Customer Gets (% of sale)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          {...form.register("consignorPayoutPercent", { valueAsNumber: true })}
+                          min="0"
+                          max="100"
+                          className="w-28 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 text-lg font-semibold"
+                        />
+                        <span className="text-2xl font-bold">%</span>
+                      </div>
+                    </div>
+
+                    {/* Payout Breakdown */}
+                    <div className="mt-3 p-4 bg-white border border-purple-200 rounded-lg">
+                      <div className="text-sm font-semibold text-gray-700 mb-2">
+                        When sold for ${suggestedPrice.toFixed(2)}:
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="text-purple-700">
+                          <span className="font-medium">Customer gets:</span>
+                          <div className="text-2xl font-bold">
+                            ${(suggestedPrice * ((form.watch("consignorPayoutPercent") || 60) / 100)).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="text-green-700">
+                          <span className="font-medium">Shop keeps:</span>
+                          <div className="text-2xl font-bold">
+                            ${(suggestedPrice * (1 - (form.watch("consignorPayoutPercent") || 60) / 100)).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Quantity *
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Quantity *</label>
                   <input
                     type="number"
                     {...form.register("quantity", { valueAsNumber: true })}
@@ -1102,9 +1372,7 @@ export default function IntakePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Location *
-                  </label>
+                  <label className="block text-sm font-medium mb-2">Location *</label>
                   <input
                     type="text"
                     {...form.register("location")}
@@ -1127,27 +1395,19 @@ export default function IntakePage() {
                 <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="text-xs text-gray-600">Market</label>
-                    <div className="text-xl font-bold">
-                      ${marketPrice.toFixed(2)}
-                    </div>
+                    <div className="text-xl font-bold">${marketPrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <label className="text-xs text-gray-600">We Pay</label>
-                    <div className="text-xl font-bold text-red-600">
-                      ${costBasis.toFixed(2)}
-                    </div>
+                    <div className="text-xl font-bold text-red-600">${costBasis.toFixed(2)}</div>
                   </div>
                   <div>
                     <label className="text-xs text-gray-600">We Sell</label>
-                    <div className="text-xl font-bold text-green-600">
-                      ${suggestedPrice.toFixed(2)}
-                    </div>
+                    <div className="text-xl font-bold text-green-600">${suggestedPrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <label className="text-xs text-gray-600">Profit</label>
-                    <div className="text-xl font-bold text-blue-600">
-                      ${profit.toFixed(2)}
-                    </div>
+                    <div className="text-xl font-bold text-blue-600">${profit.toFixed(2)}</div>
                   </div>
                 </div>
               </div>
@@ -1176,9 +1436,7 @@ export default function IntakePage() {
                   {acceptedCards.map((sc, idx) => (
                     <div key={idx} className="text-sm bg-green-50 p-2 rounded">
                       <div className="font-medium">{sc.card.name}</div>
-                      <div className="text-xs text-gray-600">
-                        Paid: ${sc.buyPrice.toFixed(2)}
-                      </div>
+                      <div className="text-xs text-gray-600">Paid: ${sc.buyPrice.toFixed(2)}</div>
                     </div>
                   ))}
                 </div>
@@ -1192,14 +1450,9 @@ export default function IntakePage() {
                 </h3>
                 <div className="space-y-2">
                   {declinedCards.map((sc, idx) => (
-                    <div
-                      key={idx}
-                      className="text-sm bg-gray-50 p-2 rounded opacity-60"
-                    >
+                    <div key={idx} className="text-sm bg-gray-50 p-2 rounded opacity-60">
                       <div className="font-medium">{sc.card.name}</div>
-                      <div className="text-xs text-gray-600">
-                        Offered: ${sc.buyPrice.toFixed(2)}
-                      </div>
+                      <div className="text-xs text-gray-600">Offered: ${sc.buyPrice.toFixed(2)}</div>
                     </div>
                   ))}
                 </div>
