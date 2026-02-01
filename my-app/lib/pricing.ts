@@ -155,3 +155,108 @@ export function calculateCostBasis(
 export function calculateSellPrice(costBasis: number): number {
   return costBasis * (1 + DEFAULT_SELL_MARKUP);
 }
+
+/**
+ * Get pricing settings from localStorage or Firebase
+ */
+export async function getPricingSettings(): Promise<{
+  conditionMultipliers: Record<string, number>;
+  sellMarkup: number;
+}> {
+  try {
+    // Try localStorage first (browser environment)
+    if (typeof window !== "undefined") {
+      const savedBuyPercents = localStorage.getItem("conditionBuyPercents");
+      const savedMarkup = localStorage.getItem("sellMarkupPercent");
+
+      if (savedBuyPercents && savedMarkup) {
+        const percents = JSON.parse(savedBuyPercents);
+        return {
+          conditionMultipliers: percents,
+          sellMarkup: parseFloat(savedMarkup),
+        };
+      }
+    }
+
+    // Try Firebase
+    const settingsRef = doc(db, "settings", "pricing");
+    const settingsDoc = await getDoc(settingsRef);
+
+    if (settingsDoc.exists()) {
+      const data = settingsDoc.data();
+      return {
+        conditionMultipliers: data.conditionMultipliers || {
+          NM: 70,
+          LP: 65,
+          MP: 55,
+          HP: 45,
+          DMG: 35,
+        },
+        sellMarkup: data.sellMarkup || 40,
+      };
+    }
+
+    // Return defaults
+    return {
+      conditionMultipliers: {
+        NM: 70,
+        LP: 65,
+        MP: 55,
+        HP: 45,
+        DMG: 35,
+      },
+      sellMarkup: 40,
+    };
+  } catch (error) {
+    console.error("Error getting pricing settings:", error);
+    // Return defaults on error
+    return {
+      conditionMultipliers: {
+        NM: 70,
+        LP: 65,
+        MP: 55,
+        HP: 45,
+        DMG: 35,
+      },
+      sellMarkup: 40,
+    };
+  }
+}
+
+/**
+ * Update pricing settings in localStorage and optionally Firebase
+ */
+export async function updatePricingSettings(
+  conditionMultipliers: Record<string, number>,
+  sellMarkup: number,
+  saveToFirebase: boolean = false,
+): Promise<void> {
+  try {
+    // Always save to localStorage (browser)
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "conditionBuyPercents",
+        JSON.stringify(conditionMultipliers),
+      );
+      localStorage.setItem("sellMarkupPercent", sellMarkup.toString());
+      console.log("✅ Saved to localStorage:", {
+        conditionMultipliers,
+        sellMarkup,
+      });
+    }
+
+    // Optionally save to Firebase
+    if (saveToFirebase) {
+      const settingsRef = doc(db, "settings", "pricing");
+      await setDoc(settingsRef, {
+        conditionMultipliers,
+        sellMarkup,
+        updatedAt: new Date().toISOString(),
+      });
+      console.log("✅ Saved to Firebase");
+    }
+  } catch (error) {
+    console.error("❌ Failed to update pricing settings:", error);
+    throw error;
+  }
+}
