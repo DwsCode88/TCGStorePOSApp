@@ -1,9 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/client";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  getDocs,
+} from "firebase/firestore";
 import { calculateCostBasis, calculateSellPrice } from "@/lib/pricing";
+
+interface Customer {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  vendorCode?: string;
+}
 
 interface BulkUploadCard {
   tcgplayerId: string;
@@ -36,6 +49,49 @@ export default function BulkUploadTab() {
   const [parsedCards, setParsedCards] = useState<ParsedBulkCard[]>([]);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+  // Customer dropdown state
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [loadingCustomers, setLoadingCustomers] = useState(true);
+
+  // Fetch customers on mount
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const customersSnapshot = await getDocs(collection(db, "customers"));
+        const customersList: Customer[] = customersSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          name: doc.data().name || "Unknown",
+          email: doc.data().email,
+          phone: doc.data().phone,
+          vendorCode:
+            doc.data().vendorCode ||
+            doc.data().name?.substring(0, 4).toUpperCase(),
+        }));
+        setCustomers(customersList);
+        console.log(`✅ Loaded ${customersList.length} customers`);
+      } catch (error) {
+        console.error("Error fetching customers:", error);
+      } finally {
+        setLoadingCustomers(false);
+      }
+    };
+
+    fetchCustomers();
+  }, []);
+
+  // Update vendor code when customer is selected
+  useEffect(() => {
+    if (selectedCustomerId) {
+      const customer = customers.find((c) => c.id === selectedCustomerId);
+      if (customer) {
+        setVendorCode(
+          customer.vendorCode || customer.name.substring(0, 4).toUpperCase(),
+        );
+      }
+    }
+  }, [selectedCustomerId, customers]);
 
   const parseCSV = (text: string): BulkUploadCard[] => {
     const lines = text.split("\n").filter((line) => line.trim());
@@ -133,9 +189,16 @@ export default function BulkUploadTab() {
     setUploading(true);
     setProgress({ current: 0, total: parsedCards.length });
 
+    const customerName = selectedCustomerId
+      ? customers.find((c) => c.id === selectedCustomerId)?.name
+      : null;
+
     console.log(
       `\n🚀 Uploading ${parsedCards.length} cards as ${acquisitionType.toUpperCase()}`,
     );
+    if (acquisitionType === "consignment" && customerName) {
+      console.log(`📦 Consignment for: ${customerName} (${vendorCode})`);
+    }
 
     const updatedCards = [...parsedCards];
 
@@ -168,6 +231,33 @@ export default function BulkUploadTab() {
           sellPrice = marketPrice * 1.3;
         }
 
+        // Generate SKU
+        const generateSKU = () => {
+          const gamePrefix = card.productLine.substring(0, 3).toUpperCase();
+          const setCode = card.setName
+            .replace(/[^a-zA-Z0-9]/g, "")
+            .substring(0, 4)
+            .toUpperCase();
+          const cardNum = card.number
+            .replace(/[^a-zA-Z0-9]/g, "")
+            .substring(0, 4)
+            .toUpperCase();
+
+          if (acquisitionType === "consignment" && vendorCode) {
+            return `${gamePrefix}-${setCode}-${cardNum}-${vendorCode}`;
+          }
+          return `${gamePrefix}-${setCode}-${cardNum}`;
+        };
+
+        const sku = generateSKU();
+
+        console.log(`📦 Preparing card ${i + 1}:`, {
+          name: card.productName,
+          sku: sku,
+          vendorCode: vendorCode,
+          acquisitionType: acquisitionType,
+        });
+
         const cardData = {
           // Card Info
           name: card.productName,
@@ -175,6 +265,7 @@ export default function BulkUploadTab() {
           number: card.number,
           rarity: card.rarity,
           game: card.productLine.toLowerCase(),
+          sku: sku,
 
           // Condition & Printing
           condition: card.condition,
@@ -199,6 +290,7 @@ export default function BulkUploadTab() {
             isConsignment: true,
             vendorCode: vendorCode.toUpperCase(),
             consignorPayoutPercent: consignorPercent,
+            ...(selectedCustomerId && { customerId: selectedCustomerId }),
           }),
 
           // TCGPlayer Info
@@ -220,10 +312,13 @@ export default function BulkUploadTab() {
         };
 
         console.log(
-          `✅ [${i + 1}/${parsedCards.length}] ${card.productName} (${docRef.id})`,
+          `✅ [${i + 1}/${parsedCards.length}] ${card.productName} (SKU: ${sku}, ID: ${docRef.id})`,
         );
       } catch (error: any) {
-        console.error(`❌ Error:`, error);
+        console.error(
+          `❌ [${i + 1}/${parsedCards.length}] Error uploading ${card.productName}:`,
+          error,
+        );
         updatedCards[i] = {
           ...parsed,
           status: "error",
@@ -247,9 +342,12 @@ export default function BulkUploadTab() {
     console.log(
       `\n📊 COMPLETE: ✅ ${successCount} success, ❌ ${errorCount} errors`,
     );
-    alert(
-      `Upload Complete!\n✅ ${successCount} cards added\n❌ ${errorCount} errors`,
-    );
+
+    let alertMessage = `Upload Complete!\n✅ ${successCount} cards added\n❌ ${errorCount} errors`;
+    if (acquisitionType === "consignment" && customerName) {
+      alertMessage += `\n\n📦 Consignment for: ${customerName}`;
+    }
+    alert(alertMessage);
   };
 
   const successCount = parsedCards.filter((c) => c.status === "success").length;
@@ -372,7 +470,46 @@ export default function BulkUploadTab() {
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
               <div className="mb-3">
                 <label className="block text-sm font-medium mb-2">
-                  Vendor Code
+                  Select Customer
+                </label>
+                {loadingCustomers ? (
+                  <div className="text-sm text-gray-500">
+                    Loading customers...
+                  </div>
+                ) : (
+                  <select
+                    value={selectedCustomerId}
+                    onChange={(e) => setSelectedCustomerId(e.target.value)}
+                    className="w-full border border-gray-300 rounded p-2 mb-2"
+                  >
+                    <option value="">-- Select Customer --</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.name}{" "}
+                        {customer.email ? `(${customer.email})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="text-xs text-gray-600 mt-1">
+                  {customers.length === 0 && !loadingCustomers && (
+                    <span className="text-orange-600">
+                      No customers found. Please add customers first or enter
+                      vendor code manually below.
+                    </span>
+                  )}
+                  {customers.length > 0 && (
+                    <span>
+                      {customers.length} customer
+                      {customers.length !== 1 ? "s" : ""} available
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <label className="block text-sm font-medium mb-2">
+                  Vendor Code {selectedCustomerId && "(Auto-filled)"}
                 </label>
                 <input
                   type="text"
@@ -382,6 +519,11 @@ export default function BulkUploadTab() {
                   className="w-full border border-gray-300 rounded p-2 uppercase"
                   maxLength={20}
                 />
+                <div className="text-xs text-gray-500 mt-1">
+                  {selectedCustomerId
+                    ? "Auto-filled from selected customer. You can edit if needed."
+                    : "Enter vendor code manually or select a customer above"}
+                </div>
               </div>
 
               <div>
@@ -453,7 +595,9 @@ export default function BulkUploadTab() {
           >
             {uploading
               ? `⬆️ Uploading... (${progress.current}/${progress.total})`
-              : `⬆️ Upload ${pendingCount} Cards as ${acquisitionType.toUpperCase()}`}
+              : acquisitionType === "consignment" && selectedCustomerId
+                ? `⬆️ Upload ${pendingCount} Cards for ${customers.find((c) => c.id === selectedCustomerId)?.name || "Customer"}`
+                : `⬆️ Upload ${pendingCount} Cards as ${acquisitionType.toUpperCase()}`}
           </button>
 
           {successCount > 0 && (
