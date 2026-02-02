@@ -1,44 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection,
-  getDocs,
-  doc,
-  updateDoc,
-  addDoc,
-} from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { InventoryItem } from "@/types/inventory";
-import { Download, History } from "lucide-react";
-
-interface ExportBatch {
-  id: string;
-  batchNumber: string;
-  exportedAt: Date;
-  itemCount: number;
-  totalCards: number;
-  totalValue: number;
-  itemSkus: string[];
-  filename: string;
-}
+import { Download, FileText } from "lucide-react";
 
 export default function ExportPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [batches, setBatches] = useState<ExportBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const [showBatches, setShowBatches] = useState(false);
-  const [filter, setFilter] = useState<"not-exported" | "exported" | "all">(
-    "not-exported",
-  );
 
   useEffect(() => {
     loadInventory();
-    loadBatches();
   }, []);
 
   const loadInventory = async () => {
@@ -58,24 +35,6 @@ export default function ExportPage() {
     }
   };
 
-  const loadBatches = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, "exportBatches"));
-      const loadedBatches = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        exportedAt: doc.data().exportedAt?.toDate() || new Date(),
-      })) as ExportBatch[];
-
-      loadedBatches.sort(
-        (a, b) => b.exportedAt.getTime() - a.exportedAt.getTime(),
-      );
-      setBatches(loadedBatches);
-    } catch (error: any) {
-      console.error("Failed to load batches:", error);
-    }
-  };
-
   const getCategoryIDs = (item: InventoryItem): string => {
     const game = item.game?.toLowerCase() || "";
     const isGraded =
@@ -83,14 +42,20 @@ export default function ExportPage() {
       item.notes?.toLowerCase().includes("graded") ||
       item.printing?.toLowerCase().includes("graded");
 
+    // Single Cards - [683] Main
     const categories = ["683"];
 
+    // Add game-specific category
     if (game.includes("one piece")) {
-      categories.push("684");
-      if (isGraded) categories.push("687");
+      categories.push("684"); // One Piece SUB
+      if (isGraded) {
+        categories.push("687"); // One Piece Graded SUB
+      }
     } else if (game.includes("pokemon") || game.includes("pokémon")) {
-      categories.push("686");
-      if (isGraded) categories.push("688");
+      categories.push("686"); // Pokemon SUB
+      if (isGraded) {
+        categories.push("688"); // Pokemon Graded SUB
+      }
     }
 
     return categories.join(",");
@@ -99,20 +64,21 @@ export default function ExportPage() {
   const escapeCSV = (value: any): string => {
     if (value === null || value === undefined) return "";
     const str = String(value);
+    // Escape quotes and wrap in quotes if contains comma, quote, or newline
     if (str.includes(",") || str.includes('"') || str.includes("\n")) {
       return `"${str.replace(/"/g, '""')}"`;
     }
     return str;
   };
 
-  const exportToCSV = async () => {
+  const exportToCSV = () => {
     setExporting(true);
 
     try {
       const itemsToExport =
         selectedItems.size > 0
           ? items.filter((item) => selectedItems.has(item.sku))
-          : items.filter((item) => !item.exportedAt);
+          : items;
 
       if (itemsToExport.length === 0) {
         toast.error("No items to export");
@@ -120,11 +86,22 @@ export default function ExportPage() {
         return;
       }
 
-      console.log(`📤 Exporting ${itemsToExport.length} items...`);
+      console.log(`📤 Exporting ${itemsToExport.length} items to CSV...`);
 
-      const batchNumber = `BATCH-${Date.now()}`;
-      const timestamp = new Date();
+      // Log consignment items for verification
+      const consignmentItems = itemsToExport.filter(
+        (item) => item.acquisitionType === "consignment",
+      );
+      if (consignmentItems.length > 0) {
+        console.log(`🤝 Found ${consignmentItems.length} consignment items`);
+        consignmentItems.forEach((item) => {
+          console.log(
+            `  - ${item.cardName}: Vendor Code = ${item.customerVendorCode || "None"}`,
+          );
+        });
+      }
 
+      // CSV Headers (from the template)
       const headers = [
         "Category IDs (Comma separate)",
         "Dept Code",
@@ -165,61 +142,71 @@ export default function ExportPage() {
       ];
 
       const rows = itemsToExport.map((item) => {
+        // Build product title
         const title = `${item.cardName}${item.setName ? ` - ${item.setName}` : ""}`;
+
+        // Build short description
         const description = [item.game, item.printing, item.condition]
           .filter(Boolean)
           .join(" | ");
+
         return [
-          getCategoryIDs(item),
-          "TCGSingles",
-          "active",
-          title,
-          description,
-          "each",
-          "store",
-          "no",
-          "",
-          "",
-          item.sku,
-          item.sku,
-          "",
-          "",
-          "",
-          "5325102",
-          "",
-          "27891",
-          "",
-          (item.costBasis || 0).toFixed(2),
-          (item.sellPrice || 0).toFixed(2),
-          "",
-          "",
-          "",
-          "",
-          (item.costBasis || 0).toFixed(2),
-          (item.quantity || 1).toString(),
-          "",
-          "",
-          "",
-          "items",
-          "",
-          "",
-          "no",
-          "",
-          "",
+          getCategoryIDs(item), // Category IDs
+          "TCGSingles", // Dept Code (fixed)
+          "active", // Status
+          title, // Product Title
+          description, // Short Description
+          "each", // Unit of Measurement
+          "store", // Availability (store only)
+          "no", // Unlimited Inventory
+          "", // Options
+          "", // Assigned option values
+          item.sku, // sku
+          item.sku, // upc (same as SKU)
+          "", // Manufacturer Product Id
+          "", // Alternate Lookups
+          "", // Manufacturer
+          // Primary Vendor - use customer vendor code for consignments, else default
+          item.acquisitionType === "consignment" && item.customerVendorCode
+            ? item.customerVendorCode
+            : "5325102",
+          "", // Serial Number
+          "27891", // Store Location ID (fixed)
+          "", // Weight
+          (item.costBasis || 0).toFixed(2), // Default Cost
+          (item.sellPrice || 0).toFixed(2), // Price
+          "", // Sale Price
+          "", // Wholesale Price
+          "", // MAP Price
+          "", // Wholesale Description
+          (item.costBasis || 0).toFixed(2), // Cost
+          (item.quantity || 1).toString(), // Inventory
+          "", // Re-Order Point
+          "", // Desired Stock Level
+          "", // Case Unit Qty
+          "items", // Retail Unit Type
+          "", // Case Unit Type
+          "", // Tax Code
+          // Vendor Consignment - 'yes' for consignment items, 'no' otherwise
+          item.acquisitionType === "consignment" ? "yes" : "no",
+          "", // Alt Barcode Title
+          "", // Bin Location (empty)
         ];
       });
 
+      // Build CSV content
       const csvContent = [
         headers.map(escapeCSV).join(","),
         ...rows.map((row) => row.map(escapeCSV).join(",")),
       ].join("\n");
 
+      // Create download
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
 
-      const dateStr = timestamp.toISOString().split("T")[0];
-      const filename = `vaulttrove-export-${dateStr}-${batchNumber}.csv`;
+      const timestamp = new Date().toISOString().split("T")[0];
+      const filename = `vaulttrove-inventory-export-${timestamp}.csv`;
 
       link.setAttribute("href", url);
       link.setAttribute("download", filename);
@@ -228,39 +215,8 @@ export default function ExportPage() {
       link.click();
       document.body.removeChild(link);
 
-      const totalCards = itemsToExport.reduce(
-        (sum, item) => sum + (item.quantity || 1),
-        0,
-      );
-      const totalValue = itemsToExport.reduce(
-        (sum, item) => sum + (item.sellPrice || 0) * (item.quantity || 1),
-        0,
-      );
-
-      const batchRef = await addDoc(collection(db, "exportBatches"), {
-        batchNumber,
-        exportedAt: timestamp,
-        itemCount: itemsToExport.length,
-        totalCards,
-        totalValue,
-        itemSkus: itemsToExport.map((item) => item.sku),
-        filename,
-      });
-
-      for (const item of itemsToExport) {
-        await updateDoc(doc(db, "inventory", item.sku), {
-          exportedAt: timestamp,
-          exportBatchId: batchRef.id,
-          exportBatchNumber: batchNumber,
-        });
-      }
-
-      toast.success(
-        `Exported ${itemsToExport.length} items in ${batchNumber}!`,
-      );
-      await loadInventory();
-      await loadBatches();
-      setSelectedItems(new Set());
+      toast.success(`Exported ${itemsToExport.length} items to CSV!`);
+      console.log(`✅ Exported ${itemsToExport.length} items to ${filename}`);
     } catch (error: any) {
       console.error("Export failed:", error);
       toast.error(`Export failed: ${error.message}`);
@@ -280,35 +236,17 @@ export default function ExportPage() {
   };
 
   const toggleAll = () => {
-    const visibleItems = getFilteredItems();
-    if (selectedItems.size === visibleItems.length) {
+    if (selectedItems.size === items.length) {
       setSelectedItems(new Set());
     } else {
-      setSelectedItems(new Set(visibleItems.map((item) => item.sku)));
+      setSelectedItems(new Set(items.map((item) => item.sku)));
     }
   };
-
-  const getFilteredItems = () => {
-    switch (filter) {
-      case "not-exported":
-        return items.filter((item) => !item.exportedAt);
-      case "exported":
-        return items.filter((item) => item.exportedAt);
-      case "all":
-        return items;
-      default:
-        return items;
-    }
-  };
-
-  const filteredItems = getFilteredItems();
-  const notExportedCount = items.filter((item) => !item.exportedAt).length;
-  const exportedCount = items.filter((item) => item.exportedAt).length;
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-lg font-medium">Loading...</div>
+        <div className="text-lg font-medium">Loading inventory...</div>
       </div>
     );
   }
@@ -316,87 +254,51 @@ export default function ExportPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Export Inventory to CSV</h1>
-            <p className="text-gray-600">Export with batch tracking</p>
-          </div>
-          <Button
-            onClick={() => setShowBatches(!showBatches)}
-            variant="outline"
-            size="lg"
-          >
-            <History className="w-4 h-4 mr-2" />
-            {showBatches ? "Hide" : "View"} Export History
-          </Button>
-        </div>
+        <h1 className="text-4xl font-bold mb-2">Export Inventory to CSV</h1>
+        <p className="text-gray-600 mb-8">
+          Export inventory in POS-compatible format
+        </p>
 
-        {showBatches && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">
-              Export History ({batches.length} batches)
-            </h2>
-            {batches.length === 0 ? (
-              <p className="text-center py-8 text-gray-500">No exports yet</p>
-            ) : (
-              <div className="space-y-3">
-                {batches.map((batch) => (
-                  <div key={batch.id} className="border rounded p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-bold text-lg">
-                          {batch.batchNumber}
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          {batch.exportedAt.toLocaleString()}
-                        </div>
-                        <div className="text-sm text-gray-700 mt-1">
-                          {batch.itemCount} items • {batch.totalCards} cards • $
-                          {batch.totalValue.toFixed(2)} value
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-gray-500">
-                          {batch.filename}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* Info Box */}
         <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-3">📦 Batch Export System</h2>
+          <h2 className="text-xl font-semibold mb-3">Export Format</h2>
           <div className="space-y-2 text-sm text-gray-700">
             <p>
-              ✅ After export, items are marked and won't show in default view
+              <strong>Categories:</strong>
             </p>
-            <p>✅ Each export creates a tracked batch with history</p>
-            <p>✅ View all past exports with batch details</p>
-            <p>✅ Filter to see exported, not exported, or all items</p>
+            <ul className="ml-4 space-y-1">
+              <li>• One Piece → [683,684]</li>
+              <li>• One Piece Graded → [683,684,687]</li>
+              <li>• Pokemon → [683,686]</li>
+              <li>• Pokemon Graded → [683,686,688]</li>
+            </ul>
+            <p className="mt-3">
+              <strong>Dept Code:</strong> TCGSingles
+            </p>
+            <p>
+              <strong>Store ID:</strong> 27891
+            </p>
+            <p>
+              <strong>Vendor ID:</strong> 5325102
+            </p>
+            <p>
+              <strong>Availability:</strong> Store only
+            </p>
+            <p>
+              <strong>UPC:</strong> Same as SKU (for barcode scanning)
+            </p>
+            <p>
+              <strong>Bin Location:</strong> Not included
+            </p>
           </div>
         </div>
 
+        {/* Stats */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="grid grid-cols-4 gap-6">
+          <div className="grid grid-cols-3 gap-6">
             <div>
               <div className="text-sm text-gray-600">Total Items</div>
               <div className="text-3xl font-bold">{items.length}</div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-600">Not Exported</div>
-              <div className="text-3xl font-bold text-green-600">
-                {notExportedCount}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-600">Already Exported</div>
-              <div className="text-3xl font-bold text-gray-400">
-                {exportedCount}
-              </div>
             </div>
             <div>
               <div className="text-sm text-gray-600">Selected</div>
@@ -404,51 +306,31 @@ export default function ExportPage() {
                 {selectedItems.size}
               </div>
             </div>
+            <div>
+              <div className="text-sm text-gray-600">Total Cards</div>
+              <div className="text-3xl font-bold">
+                {items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <div className="flex items-center gap-4">
-            <span className="font-semibold">Show:</span>
-            <Button
-              onClick={() => setFilter("not-exported")}
-              variant={filter === "not-exported" ? "default" : "outline"}
-              size="sm"
-            >
-              Not Exported ({notExportedCount})
-            </Button>
-            <Button
-              onClick={() => setFilter("exported")}
-              variant={filter === "exported" ? "default" : "outline"}
-              size="sm"
-            >
-              Exported ({exportedCount})
-            </Button>
-            <Button
-              onClick={() => setFilter("all")}
-              variant={filter === "all" ? "default" : "outline"}
-              size="sm"
-            >
-              All ({items.length})
-            </Button>
-          </div>
-        </div>
-
+        {/* Actions */}
         <div className="flex gap-4 mb-6">
           <Button
             onClick={exportToCSV}
-            disabled={exporting || selectedItems.size === 0}
+            disabled={exporting}
             className="bg-green-600 hover:bg-green-700"
             size="lg"
           >
             <Download className="w-4 h-4 mr-2" />
             {exporting
               ? "Exporting..."
-              : `Export ${selectedItems.size} Items as New Batch`}
+              : `Export ${selectedItems.size > 0 ? selectedItems.size : items.length} Items`}
           </Button>
 
           <Button onClick={toggleAll} variant="outline" size="lg">
-            {selectedItems.size === filteredItems.length
+            {selectedItems.size === items.length
               ? "Deselect All"
               : "Select All"}
           </Button>
@@ -462,26 +344,18 @@ export default function ExportPage() {
           </Button>
         </div>
 
+        {/* Items List */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold mb-4">
-            {filter === "not-exported"
-              ? "Items Ready to Export"
-              : filter === "exported"
-                ? "Previously Exported Items"
-                : "All Items"}
-          </h2>
+          <h2 className="text-xl font-semibold mb-4">Inventory Items</h2>
 
-          {filteredItems.length === 0 ? (
+          {items.length === 0 ? (
             <p className="text-center py-12 text-gray-500">
-              {filter === "not-exported"
-                ? "No items ready to export"
-                : "No items"}
+              No items in inventory
             </p>
           ) : (
             <div className="space-y-2 max-h-[600px] overflow-y-auto">
-              {filteredItems.map((item) => {
+              {items.map((item) => {
                 const isSelected = selectedItems.has(item.sku);
-                const isExported = !!item.exportedAt;
                 return (
                   <div
                     key={item.sku}
@@ -489,9 +363,7 @@ export default function ExportPage() {
                     className={`border rounded p-3 cursor-pointer flex items-center justify-between ${
                       isSelected
                         ? "border-blue-500 bg-blue-50"
-                        : isExported
-                          ? "border-gray-200 bg-gray-50"
-                          : "border-gray-200 hover:border-blue-300"
+                        : "border-gray-200 hover:border-blue-300"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -502,23 +374,11 @@ export default function ExportPage() {
                         className="w-4 h-4"
                       />
                       <div>
-                        <div className="flex items-center gap-2">
-                          <div className="font-semibold">{item.cardName}</div>
-                          {isExported && (
-                            <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded">
-                              Exported
-                            </span>
-                          )}
-                        </div>
+                        <div className="font-semibold">{item.cardName}</div>
                         <div className="text-sm text-gray-600">
                           {item.game} • {item.setName} • {item.condition}
                         </div>
                         <div className="text-xs text-gray-500">{item.sku}</div>
-                        {isExported && item.exportBatchNumber && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            Batch: {item.exportBatchNumber}
-                          </div>
-                        )}
                       </div>
                     </div>
                     <div className="text-right">

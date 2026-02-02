@@ -13,7 +13,14 @@ import {
   type APIProvider,
 } from "@/lib/card-api-adapter";
 import { createInventoryItem } from "@/lib/firebase/inventory";
-import { collection, getDocs, addDoc } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  getDoc,
+  doc,
+  setDoc,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import {
   calculateCostBasis,
@@ -22,6 +29,7 @@ import {
 } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import { Check, X } from "lucide-react";
+import BulkUploadTab from "./components/BulkUploadTab";
 
 const GAME_MAPPING: Record<string, string> = {
   pokemon: "pokemon",
@@ -60,8 +68,11 @@ interface SessionCard {
 }
 
 export default function IntakePage() {
+  const [activeTab, setActiveTab] = useState<"single" | "bulk">("single");
   const [apiProvider, setApiProviderState] = useState<APIProvider | null>(null);
-  const [availableProviders, setAvailableProviders] = useState<APIProvider[]>([]);
+  const [availableProviders, setAvailableProviders] = useState<APIProvider[]>(
+    [],
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [gameFilter, setGameFilter] = useState("onepiece");
@@ -79,19 +90,28 @@ export default function IntakePage() {
   const [tempSelectedCard, setTempSelectedCard] = useState<any>(null);
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualCardData, setManualCardData] = useState({
-    name: '',
-    setName: '',
-    number: '',
-    rarity: '',
-    marketPrice: '',
+    name: "",
+    setName: "",
+    number: "",
+    rarity: "",
+    marketPrice: "",
   });
-  const [customers, setCustomers] = useState<Array<{id: string; name: string; phone: string; email: string}>>([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [customers, setCustomers] = useState<
+    Array<{
+      id: string;
+      name: string;
+      phone: string;
+      email: string;
+      vendorCode?: string;
+    }>
+  >([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
-    name: '',
-    phone: '',
-    email: '',
+    name: "",
+    phone: "",
+    email: "",
+    vendorCode: "",
   });
 
   // Pricing settings with defaults (stored as percentages)
@@ -106,44 +126,35 @@ export default function IntakePage() {
 
   // Load settings and customers from localStorage/Firebase on mount
   useEffect(() => {
-    const savedBuyPercents = localStorage.getItem('conditionBuyPercents');
-    const savedMarkup = localStorage.getItem('sellMarkupPercent');
-    
+    const savedBuyPercents = localStorage.getItem("conditionBuyPercents");
+    const savedMarkup = localStorage.getItem("sellMarkupPercent");
+
     if (savedBuyPercents) {
-      const loaded = JSON.parse(savedBuyPercents);
-      setConditionBuyPercents(loaded);
-      console.log('✅ Loaded buy percents:', loaded);
+      setConditionBuyPercents(JSON.parse(savedBuyPercents));
     }
     if (savedMarkup) {
-      const loaded = parseFloat(savedMarkup);
-      setSellMarkupPercent(loaded);
-      console.log('✅ Loaded markup percent:', loaded);
+      setSellMarkupPercent(parseFloat(savedMarkup));
     }
-    
+
     // Load customers from Firebase
     const loadCustomers = async () => {
       try {
-        const snapshot = await getDocs(collection(db, 'customers'));
-        const customerList = snapshot.docs.map(doc => ({
+        const snapshot = await getDocs(collection(db, "customers"));
+        const customerList = snapshot.docs.map((doc) => ({
           id: doc.id,
           name: doc.data().name,
-          phone: doc.data().phone || '',
-          email: doc.data().email || '',
+          phone: doc.data().phone || "",
+          email: doc.data().email || "",
+          vendorCode: doc.data().vendorCode || "",
         }));
         setCustomers(customerList);
-        console.log('✅ Loaded customers:', customerList);
       } catch (error) {
-        console.error('Error loading customers:', error);
+        console.error("Error loading customers:", error);
       }
     };
-    
+
     loadCustomers();
   }, []);
-
-  // Debug modal state
-  useEffect(() => {
-    console.log('🔔 showAddCustomerModal changed:', showAddCustomerModal);
-  }, [showAddCustomerModal]);
 
   const form = useForm<IntakeFormData>({
     resolver: zodResolver(intakeSchema),
@@ -176,19 +187,6 @@ export default function IntakePage() {
     setAPIProvider(preferredProvider);
   }, []);
 
-  // Debug: Log when prices change
-  useEffect(() => {
-    if (step === 2 && selectedCard) {
-      console.log('📊 Prices updated:', {
-        market: marketPrice,
-        buyPrice: costBasis,
-        sellPrice: suggestedPrice,
-        profit: profit,
-        condition: form.getValues("condition")
-      });
-    }
-  }, [costBasis, suggestedPrice, profit, step]);
-
   const handleProviderChange = (provider: APIProvider) => {
     setApiProviderState(provider);
     setAPIProvider(provider);
@@ -199,46 +197,38 @@ export default function IntakePage() {
   };
 
   const handleAddCustomer = async () => {
-    alert('🎯 Button clicked! Check console...');
-    console.log('🎯 handleAddCustomer called');
-    console.log('Customer data:', newCustomer);
-    console.log('Current customers:', customers);
-    console.log('Firebase db:', typeof db);
-    
     if (!newCustomer.name) {
-      console.log('❌ Name is missing');
-      alert('❌ Name is required!');
       toast.error("Customer name is required");
       return;
     }
 
     if (!newCustomer.phone && !newCustomer.email) {
-      console.log('❌ Phone and email are both missing');
-      alert('❌ Need phone or email!');
       toast.error("Please provide phone or email");
       return;
     }
 
     try {
-      console.log('💾 Adding customer to Firebase...');
-      console.log('Customer data to save:', newCustomer);
-      
       const customerData = {
         name: newCustomer.name,
-        phone: newCustomer.phone || '',
-        email: newCustomer.email || '',
+        phone: newCustomer.phone || "",
+        email: newCustomer.email || "",
+        vendorCode: newCustomer.vendorCode || "",
         createdAt: new Date().toISOString(),
         totalConsignments: 0,
         totalOwed: 0,
       };
-      
-      console.log('Final customer data:', customerData);
-      
-      const docRef = await addDoc(collection(db, 'customers'), customerData);
 
-      console.log('✅ Customer added with ID:', docRef.id);
-      alert('✅ Customer saved to Firebase! ID: ' + docRef.id);
-      
+      const savePromise = addDoc(collection(db, "customers"), customerData);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(new Error("Customer save timeout - check Firestore rules")),
+          10000,
+        ),
+      );
+
+      const docRef = (await Promise.race([savePromise, timeoutPromise])) as any;
+
       // Add to local state
       const newCustomerData = {
         id: docRef.id,
@@ -246,23 +236,17 @@ export default function IntakePage() {
         phone: newCustomer.phone,
         email: newCustomer.email,
       };
-      
-      console.log('📝 Adding to local state:', newCustomerData);
+
       setCustomers([...customers, newCustomerData]);
       setSelectedCustomerId(docRef.id);
-      console.log('✅ Selected customer ID:', docRef.id);
-      
+
       // Reset form
-      setNewCustomer({ name: '', phone: '', email: '' });
+      setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
       setShowAddCustomerModal(false);
-      console.log('✅ Modal closed');
-      
+
       toast.success(`Customer "${newCustomer.name}" added!`);
-      alert('✅ All done! Customer should be in dropdown now.');
     } catch (error: any) {
-      console.error('❌ Error adding customer:', error);
-      console.error('Error message:', error.message);
-      alert('❌ ERROR: ' + error.message);
+      console.error("Error adding customer:", error);
       toast.error(`Failed to add customer: ${error.message}`);
     }
   };
@@ -305,82 +289,61 @@ export default function IntakePage() {
     acqType: "buy" | "trade" | "pull",
     cond: string,
   ) => {
-    console.log('💰 updatePricing called:', { market, acqType, cond });
-    console.log('💰 Current buy percents:', conditionBuyPercents);
-    console.log('💰 Current markup percent:', sellMarkupPercent);
-    
     try {
       const breakdown = await getPricingBreakdown(market, acqType, cond);
-      console.log('💰 Breakdown from Firebase:', breakdown);
-      
+
       // Check if Firebase returned condition-aware pricing
-      // If costBasis seems wrong (not matching our condition %), recalculate
       const normalizedCond = cond.toUpperCase().trim();
-      const expectedBuyPercent = conditionBuyPercents[normalizedCond as keyof typeof conditionBuyPercents] || conditionBuyPercents.NM;
+      const expectedBuyPercent =
+        conditionBuyPercents[
+          normalizedCond as keyof typeof conditionBuyPercents
+        ] || conditionBuyPercents.NM;
       const expectedCost = market * (expectedBuyPercent / 100);
-      
-      console.log('🔍 Validating Firebase result:', {
-        firebaseCost: breakdown.costBasis,
-        expectedCost: expectedCost,
-        condition: normalizedCond,
-        expectedPercent: expectedBuyPercent
-      });
-      
+
       // If Firebase result is off by more than 1%, use local calculation
-      const percentDiff = Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
-      console.log('📊 Difference from expected:', percentDiff + '%');
-      
+      const percentDiff =
+        Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
+
       if (percentDiff > 1) {
-        console.log('⚠️ Firebase pricing not condition-aware, using local settings');
-        
+        // Use local calculation
         let localCost = 0;
         if (acqType === "buy") {
           localCost = market * (expectedBuyPercent / 100);
         } else if (acqType === "trade") {
           localCost = market * ((expectedBuyPercent + 5) / 100);
         }
-        
+
         const localSell = localCost * (1 + sellMarkupPercent / 100);
         const localProfit = localSell - localCost;
-        
-        console.log('💰 Using local calculation:', {
-          buyPrice: localCost,
-          sellPrice: localSell,
-          profit: localProfit
-        });
-        
+
         setCostBasis(localCost);
         setSuggestedPrice(localSell);
         setProfit(localProfit);
         form.setValue("costBasis", localCost);
       } else {
-        console.log('✅ Using Firebase pricing (matches expected)');
+        // Use Firebase pricing
         setCostBasis(breakdown.costBasis);
         setSuggestedPrice(breakdown.sellPrice);
         setProfit(breakdown.profit);
         form.setValue("costBasis", breakdown.costBasis);
       }
     } catch (error) {
-      console.log('⚠️ Firebase pricing failed, using local settings');
-      
+      // Fallback to local calculation
       const normalizedCond = cond.toUpperCase().trim();
-      const buyPercent = conditionBuyPercents[normalizedCond as keyof typeof conditionBuyPercents] || conditionBuyPercents.NM;
-      
+      const buyPercent =
+        conditionBuyPercents[
+          normalizedCond as keyof typeof conditionBuyPercents
+        ] || conditionBuyPercents.NM;
+
       let fallbackCost = 0;
       if (acqType === "buy") {
         fallbackCost = market * (buyPercent / 100);
       } else if (acqType === "trade") {
         fallbackCost = market * ((buyPercent + 5) / 100);
       }
-      
+
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
       const fallbackProfit = fallbackSell - fallbackCost;
-      
-      console.log('💰 Local fallback calculation:', {
-        buyPrice: fallbackCost,
-        sellPrice: fallbackSell,
-        profit: fallbackProfit
-      });
 
       setCostBasis(fallbackCost);
       setSuggestedPrice(fallbackSell);
@@ -392,10 +355,10 @@ export default function IntakePage() {
   const handleSelectCard = async (card: any) => {
     try {
       setTempSelectedCard(card);
-      
+
       // Always show all conditions - employee needs to pick based on physical card
       setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
-      
+
       // Show condition selection modal
       setShowConditionModal(true);
     } catch (error: any) {
@@ -429,33 +392,35 @@ export default function IntakePage() {
       rarity: manualCardData.rarity || "",
       game: gameFilter,
       imageUrl: null,
-      variants: [{
-        price: price,
-        condition: "NM",
-        printing: "Normal"
-      }]
+      variants: [
+        {
+          price: price,
+          condition: "NM",
+          printing: "Normal",
+        },
+      ],
     };
 
     setTempSelectedCard(manualCard);
     setShowManualEntry(false);
     setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
     setShowConditionModal(true);
-    
+
     // Reset manual form
     setManualCardData({
-      name: '',
-      setName: '',
-      number: '',
-      rarity: '',
-      marketPrice: '',
+      name: "",
+      setName: "",
+      number: "",
+      rarity: "",
+      marketPrice: "",
     });
-    
+
     toast.success("Manual card added");
   };
 
   const handleConditionSelected = async (selectedCondition: string) => {
     if (!tempSelectedCard) return;
-    
+
     try {
       setSelectedCard(tempSelectedCard);
       setShowConditionModal(false);
@@ -470,7 +435,7 @@ export default function IntakePage() {
       let variantWithPrice = tempSelectedCard.variants?.find(
         (v: any) => v.condition === selectedCondition && v.price && v.price > 0,
       );
-      
+
       // If no exact match, use any variant with a price
       if (!variantWithPrice) {
         variantWithPrice = tempSelectedCard.variants?.find(
@@ -484,7 +449,7 @@ export default function IntakePage() {
         setMarketPrice(marketPriceFromAPI);
         form.setValue("printing", variantWithPrice.printing || "Normal");
         form.setValue("acquisitionType", "buy");
-        
+
         // Calculate buy price based on selected condition
         await updatePricing(marketPriceFromAPI, "buy", selectedCondition);
       } else {
@@ -521,7 +486,7 @@ export default function IntakePage() {
         },
       ]);
     }
-    
+
     toast.info(`Declined ${selectedCard?.name}`);
     setSelectedCard(null);
     setSearchQuery("");
@@ -530,43 +495,18 @@ export default function IntakePage() {
   };
 
   const handleConditionChange = async (condition: string) => {
-    console.log('🔄 Condition changed to:', condition, 'Market price:', marketPrice);
-    console.log('📊 Current state before update:', {
-      costBasis,
-      suggestedPrice,
-      profit,
-      currentCondition: form.getValues("condition")
-    });
-    
     form.setValue("condition", condition);
-    
+
     if (marketPrice > 0) {
-      console.log('💰 About to call updatePricing with:', {
-        market: marketPrice,
-        acqType: form.getValues("acquisitionType"),
-        condition: condition
-      });
-      
       await updatePricing(
         marketPrice,
         form.getValues("acquisitionType"),
         condition,
       );
-      
-      console.log('📊 State after updatePricing:', {
-        costBasis,
-        suggestedPrice,
-        profit,
-        condition
-      });
-    } else {
-      console.warn('⚠️ Cannot update pricing - market price is 0');
     }
   };
 
   const onSubmit = async (data: IntakeFormData) => {
-    console.log('📝 Form submitted:', data);
-    
     if (!selectedCard) {
       toast.error("Please select a card");
       return;
@@ -580,20 +520,37 @@ export default function IntakePage() {
     // Validate consignment fields
     if (data.acquisitionType === "consignment") {
       if (!selectedCustomerId) {
-        console.log('❌ No customer selected for consignment');
         toast.error("Please select a customer for consignment");
         setLoading(false);
         return;
       }
-      console.log('✅ Customer selected:', selectedCustomerId);
     }
 
     setLoading(true);
     try {
-      console.log('💾 Creating inventory item...');
-      console.log('Selected card:', selectedCard);
-      console.log('Form data:', data);
-      
+      // Get customer vendor code if consignment
+      let customerVendorCode = "";
+      let customSKU = "";
+
+      if (data.acquisitionType === "consignment" && selectedCustomerId) {
+        const customer = customers.find((c) => c.id === selectedCustomerId);
+        customerVendorCode = customer?.vendorCode || "";
+
+        console.log("🤝 Consignment - Customer:", customer?.name);
+        console.log("🏷️ Customer vendor code:", customerVendorCode);
+
+        // Generate custom SKU for consignment with vendor code
+        const timestamp = Date.now().toString(36).toUpperCase();
+        const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+
+        if (customerVendorCode) {
+          customSKU = `${customerVendorCode}-${timestamp}${random}`;
+          console.log("✨ Generated SKU:", customSKU);
+        } else {
+          console.log("⚠️ No vendor code for customer");
+        }
+      }
+
       const inventoryData = {
         ...data,
         cardName: selectedCard.name,
@@ -604,9 +561,11 @@ export default function IntakePage() {
         status: "priced",
         priceSource: apiProvider ? getProviderName(apiProvider) : "Unknown",
         imageUrl: selectedCard.imageUrl,
+        ...(customSKU && { sku: customSKU }),
         // Consignment fields (only if consignment type)
         ...(data.acquisitionType === "consignment" && {
           customerId: selectedCustomerId,
+          customerVendorCode: customerVendorCode,
           consignorPayoutPercent: data.consignorPayoutPercent || 60,
           consignorOwed: 0,
           consignorPaid: false,
@@ -614,37 +573,71 @@ export default function IntakePage() {
         }),
       };
 
-      console.log('📦 Inventory data to save:', inventoryData);
+      console.log("📦 Inventory data to save:", {
+        sku: inventoryData.sku,
+        acquisitionType: inventoryData.acquisitionType,
+        customerVendorCode: inventoryData.customerVendorCode,
+      });
 
-      console.log('⏳ Calling createInventoryItem...');
-      console.log('Function exists?', typeof createInventoryItem);
-      
       let sku;
-      try {
-        // Try using createInventoryItem first
-        const savePromise = createInventoryItem(inventoryData as any);
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Save timeout after 10 seconds')), 10000)
+
+      // For consignment items with custom SKU, save directly to Firebase
+      // Use the custom SKU as the document ID
+      if (data.acquisitionType === "consignment" && customSKU) {
+        console.log(
+          "💾 Saving consignment with custom SKU as document ID:",
+          customSKU,
         );
-        
-        sku = await Promise.race([savePromise, timeoutPromise]);
-        console.log('✅ Item created with createInventoryItem, SKU:', sku);
-      } catch (createError: any) {
-        console.log('⚠️ createInventoryItem failed, trying direct Firebase save...');
-        console.log('Error was:', createError.message);
-        
-        // Fallback: Save directly to Firebase
-        const docRef = await addDoc(collection(db, 'inventory'), {
+        console.log("📦 Full inventory data before save:", inventoryData);
+
+        // Use setDoc with custom document ID instead of addDoc
+        await setDoc(doc(db, "inventory", customSKU), {
           ...inventoryData,
+          sku: customSKU, // Also save as field for reference
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
-        
-        sku = docRef.id;
-        console.log('✅ Item created with direct save, SKU:', sku);
-      }
 
-      console.log('✅ Item created with SKU:', sku);
+        sku = customSKU;
+        console.log("✅ Consignment saved to Firebase");
+        console.log("📄 Document ID (same as SKU):", sku);
+
+        // Verify what was actually saved
+        const savedDoc = await getDoc(doc(db, "inventory", customSKU));
+        const savedData = savedDoc.data();
+        console.log("🔍 Verification - Document ID:", savedDoc.id);
+        console.log("🔍 Verification - SKU field:", savedData?.sku);
+        console.log(
+          "🔍 Verification - Customer vendor code:",
+          savedData?.customerVendorCode,
+        );
+
+        if (savedDoc.id === customSKU) {
+          console.log("✅ SUCCESS! Document ID matches custom SKU!");
+        }
+      } else {
+        // For non-consignment items, use the normal flow
+        try {
+          const savePromise = createInventoryItem(inventoryData as any);
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Save timeout - trying direct save")),
+              10000,
+            ),
+          );
+
+          sku = await Promise.race([savePromise, timeoutPromise]);
+        } catch (createError: any) {
+          // Fallback: Save directly to Firebase
+          const docRef = await addDoc(collection(db, "inventory"), {
+            ...inventoryData,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+
+          sku = docRef.id;
+        }
+      }
 
       // Track accepted
       setSessionCards([
@@ -659,7 +652,9 @@ export default function IntakePage() {
         },
       ]);
 
-      toast.success(`✅ Card added! SKU: ${sku}`);
+      // Show the correct SKU - custom SKU if consignment, otherwise doc ID
+      const displaySKU = customSKU || sku;
+      toast.success(`✅ Card added! SKU: ${displaySKU}`);
 
       // Reset form
       form.reset();
@@ -672,16 +667,12 @@ export default function IntakePage() {
       setSuggestedPrice(0);
       setProfit(0);
       setAvailableConditions([]);
-      setSelectedCustomerId('');
+      setSelectedCustomerId("");
       setStep(1);
     } catch (error: any) {
-      console.error("❌ Save error:", error);
-      console.error("Error name:", error.name);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
-      toast.error(`Failed to add card: ${error.message || 'Unknown error'}`);
+      console.error("Error saving card:", error);
+      toast.error(`Failed to add card: ${error.message || "Unknown error"}`);
     } finally {
-      console.log('🏁 Finally block - stopping loading');
       setLoading(false);
     }
   };
@@ -703,762 +694,997 @@ export default function IntakePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto p-6 max-w-5xl">
-        {/* Header with Session Stats */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <div className="flex items-center gap-4">
-                <h1 className="text-4xl font-bold mb-2">Card Intake</h1>
-                <a
-                  href="/settings"
-                  className="inline-flex items-center px-3 py-1 mb-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  ⚙️ Settings
-                </a>
-              </div>
-              <p className="text-gray-600">Make offers to buy cards</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Using: <span className="font-semibold">{getProviderName(apiProvider)}</span>
-              </p>
-            </div>
-
-            {availableProviders.length > 1 && (
-              <div className="bg-white rounded-lg shadow-sm p-4 border">
-                <label className="block text-sm font-medium mb-2">Price Source</label>
-                <div className="flex gap-2">
-                  {availableProviders.map((provider) => (
-                    <button
-                      key={provider}
-                      onClick={() => handleProviderChange(provider)}
-                      className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                        apiProvider === provider
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      }`}
-                    >
-                      {getProviderName(provider)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+        {/* Tabs */}
+        <div className="mb-6 border-b border-gray-200">
+          <div className="flex gap-4">
+            <button
+              onClick={() => setActiveTab("single")}
+              className={`px-6 py-3 font-semibold border-b-2 ${
+                activeTab === "single"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-600"
+              }`}
+            >
+              🔍 Single Card
+            </button>
+            <button
+              onClick={() => setActiveTab("bulk")}
+              className={`px-6 py-3 font-semibold border-b-2 ${
+                activeTab === "bulk"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-600"
+              }`}
+            >
+              📦 Bulk Upload
+            </button>
           </div>
         </div>
 
-        {/* Session Stats */}
-        {sessionCards.length > 0 && (
-          <div className="grid grid-cols-4 gap-4 mb-6">
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600">Cards Offered</div>
-              <div className="text-2xl font-bold">{sessionCards.length}</div>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600">Accepted</div>
-              <div className="text-2xl font-bold text-green-600">{acceptedCards.length}</div>
-              <div className="text-xs text-gray-500">${totalPayout.toFixed(2)}</div>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600">Declined</div>
-              <div className="text-2xl font-bold text-red-600">{declinedCards.length}</div>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600">Total Payout</div>
-              <div className="text-2xl font-bold text-purple-600">${totalPayout.toFixed(2)}</div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 1: Search */}
-        {step === 1 && (
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Search for a Card</h2>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Game</label>
-              <select
-                value={gameFilter}
-                onChange={(e) => setGameFilter(e.target.value)}
-                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="onepiece">One Piece</option>
-                <option value="pokemon">Pokémon</option>
-                <option value="mtg">Magic: The Gathering</option>
-                <option value="lorcana">Lorcana</option>
-                <option value="digimon">Digimon</option>
-                <option value="yugioh">Yu-Gi-Oh!</option>
-                <option value="flesh-and-blood">Flesh and Blood</option>
-                <option value="star-wars">Star Wars Unlimited</option>
-                <option value="dragon-ball">Dragon Ball Super</option>
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Card Name</label>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="e.g., Luffy, Pikachu"
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Card Number</label>
-                <input
-                  type="text"
-                  value={cardNumber}
-                  onChange={(e) => setCardNumber(e.target.value)}
-                  placeholder="e.g., OP01-001, ST01-001"
-                  className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                />
-              </div>
-            </div>
-
-            <Button
-              onClick={handleSearch}
-              disabled={loading}
-              size="lg"
-              className="w-full mb-6"
-            >
-              {loading ? "Searching..." : "Search"}
-            </Button>
-
-            <div className="text-center mb-6">
-              <span className="text-gray-500 text-sm">OR</span>
-            </div>
-
-            <Button
-              onClick={handleManualEntry}
-              variant="outline"
-              size="lg"
-              className="w-full mb-6"
-            >
-              📝 Manual Entry from TCGplayer
-            </Button>
-
-            {searchResults.length > 0 && (
-              <div>
-                <h3 className="font-medium mb-3">Results ({searchResults.length})</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto">
-                  {searchResults.map((card: any) => (
-                    <div
-                      key={card.id}
-                      onClick={() => handleSelectCard(card)}
-                      className="p-4 border rounded-lg hover:border-blue-500 hover:shadow-lg cursor-pointer transition-all bg-white"
+        {activeTab === "single" ? (
+          <div>
+            {/* Header with Session Stats */}
+            <div className="mb-8">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4">
+                    <h1 className="text-4xl font-bold mb-2">Card Intake</h1>
+                    <a
+                      href="/settings"
+                      className="inline-flex items-center px-3 py-1 mb-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
                     >
-                      {card.imageUrl && (
-                        <div className="mb-3 bg-gray-100 rounded-lg p-2">
-                          <img
-                            src={card.imageUrl}
-                            alt={card.name}
-                            className="w-full h-48 object-contain rounded"
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      <div className="font-semibold text-lg">{card.name}</div>
-                      <div className="text-sm text-gray-600 mt-1">{card.setName}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {card.number && `#${card.number}`}{" "}
-                        {card.rarity && `• ${card.rarity}`}
-                      </div>
-                      {card.variants && card.variants.length > 0 && card.variants[0]?.price > 0 ? (
-                        <div className="text-xs text-blue-600 mt-2 font-medium">
-                          ${card.variants[0].price.toFixed(2)}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-gray-500 mt-2">No price</div>
-                      )}
-                    </div>
-                  ))}
+                      ⚙️ Settings
+                    </a>
+                  </div>
+                  <p className="text-gray-600">Make offers to buy cards</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Using:{" "}
+                    <span className="font-semibold">
+                      {getProviderName(apiProvider)}
+                    </span>
+                  </p>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
 
-        {/* Condition Selection Modal */}
-        {showConditionModal && tempSelectedCard && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full mx-4">
-              <h2 className="text-2xl font-bold mb-4">Select Condition</h2>
-              
-              {/* Card Preview */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex gap-4">
-                {tempSelectedCard.imageUrl && (
-                  <div className="flex-shrink-0">
-                    <img
-                      src={tempSelectedCard.imageUrl}
-                      alt={tempSelectedCard.name}
-                      className="w-32 h-44 object-contain rounded border border-blue-200"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
+                {availableProviders.length > 1 && (
+                  <div className="bg-white rounded-lg shadow-sm p-4 border">
+                    <label className="block text-sm font-medium mb-2">
+                      Price Source
+                    </label>
+                    <div className="flex gap-2">
+                      {availableProviders.map((provider) => (
+                        <button
+                          key={provider}
+                          onClick={() => handleProviderChange(provider)}
+                          className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                            apiProvider === provider
+                              ? "bg-blue-600 text-white"
+                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          }`}
+                        >
+                          {getProviderName(provider)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div className="flex-1">
-                  <h3 className="font-bold text-lg">{tempSelectedCard.name}</h3>
-                  <p className="text-sm text-gray-600">{tempSelectedCard.setName}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {tempSelectedCard.number && `#${tempSelectedCard.number}`}{" "}
-                    {tempSelectedCard.rarity && `• ${tempSelectedCard.rarity}`}
-                  </p>
-                </div>
               </div>
-
-              <p className="text-gray-600 mb-4">
-                Choose the card's condition to see pricing:
-              </p>
-
-              {/* Condition Buttons */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-                {availableConditions.map((condition) => (
-                  <button
-                    key={condition}
-                    onClick={() => handleConditionSelected(condition)}
-                    className="px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105"
-                  >
-                    {condition}
-                  </button>
-                ))}
-              </div>
-
-              <Button
-                onClick={() => {
-                  setShowConditionModal(false);
-                  setTempSelectedCard(null);
-                }}
-                variant="outline"
-                className="w-full"
-              >
-                Cancel
-              </Button>
             </div>
-          </div>
-        )}
 
-        {/* Manual Entry Modal */}
-        {showManualEntry && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <h2 className="text-2xl font-bold mb-2">Manual Entry from TCGplayer</h2>
-              <p className="text-gray-600 mb-6">Enter card details and market price from TCGplayer</p>
+            {/* Session Stats */}
+            {sessionCards.length > 0 && (
+              <div className="grid grid-cols-4 gap-4 mb-6">
+                <div className="bg-white rounded-lg shadow p-4">
+                  <div className="text-sm text-gray-600">Cards Offered</div>
+                  <div className="text-2xl font-bold">
+                    {sessionCards.length}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                  <div className="text-sm text-gray-600">Accepted</div>
+                  <div className="text-2xl font-bold text-green-600">
+                    {acceptedCards.length}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    ${totalPayout.toFixed(2)}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                  <div className="text-sm text-gray-600">Declined</div>
+                  <div className="text-2xl font-bold text-red-600">
+                    {declinedCards.length}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                  <div className="text-sm text-gray-600">Total Payout</div>
+                  <div className="text-2xl font-bold text-purple-600">
+                    ${totalPayout.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            )}
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Card Name *</label>
-                  <input
-                    type="text"
-                    value={manualCardData.name}
-                    onChange={(e) => setManualCardData({...manualCardData, name: e.target.value})}
-                    placeholder="e.g., Monkey.D.Luffy"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
+            {/* Step 1: Search */}
+            {step === 1 && (
+              <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <h2 className="text-xl font-semibold mb-4">
+                  Search for a Card
+                </h2>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">Game</label>
+                  <select
+                    value={gameFilter}
+                    onChange={(e) => setGameFilter(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="onepiece">One Piece</option>
+                    <option value="pokemon">Pokémon</option>
+                    <option value="mtg">Magic: The Gathering</option>
+                    <option value="lorcana">Lorcana</option>
+                    <option value="digimon">Digimon</option>
+                    <option value="yugioh">Yu-Gi-Oh!</option>
+                    <option value="flesh-and-blood">Flesh and Blood</option>
+                    <option value="star-wars">Star Wars Unlimited</option>
+                    <option value="dragon-ball">Dragon Ball Super</option>
+                  </select>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">Set Name</label>
-                  <input
-                    type="text"
-                    value={manualCardData.setName}
-                    onChange={(e) => setManualCardData({...manualCardData, setName: e.target.value})}
-                    placeholder="e.g., Romance Dawn"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Card Number</label>
+                    <label className="block text-sm font-medium mb-2">
+                      Card Name
+                    </label>
                     <input
                       type="text"
-                      value={manualCardData.number}
-                      onChange={(e) => setManualCardData({...manualCardData, number: e.target.value})}
-                      placeholder="e.g., OP01-001"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="e.g., Luffy, Pikachu"
+                      className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Rarity</label>
+                    <label className="block text-sm font-medium mb-2">
+                      Card Number
+                    </label>
                     <input
                       type="text"
-                      value={manualCardData.rarity}
-                      onChange={(e) => setManualCardData({...manualCardData, rarity: e.target.value})}
-                      placeholder="e.g., SR, R, C"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      value={cardNumber}
+                      onChange={(e) => setCardNumber(e.target.value)}
+                      placeholder="e.g., OP01-001, ST01-001"
+                      className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">Market Price (from TCGplayer) *</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-semibold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={manualCardData.marketPrice}
-                      onChange={(e) => setManualCardData({...manualCardData, marketPrice: e.target.value})}
-                      placeholder="0.00"
-                      className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enter the current market price from TCGplayer
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
                 <Button
-                  onClick={handleManualSubmit}
-                  className="flex-1 bg-green-600 hover:bg-green-700"
+                  onClick={handleSearch}
+                  disabled={loading}
                   size="lg"
+                  className="w-full mb-6"
                 >
-                  Continue
+                  {loading ? "Searching..." : "Search"}
                 </Button>
+
+                <div className="text-center mb-6">
+                  <span className="text-gray-500 text-sm">OR</span>
+                </div>
+
                 <Button
-                  onClick={() => {
-                    setShowManualEntry(false);
-                    setManualCardData({
-                      name: '',
-                      setName: '',
-                      number: '',
-                      rarity: '',
-                      marketPrice: '',
-                    });
-                  }}
+                  onClick={handleManualEntry}
                   variant="outline"
                   size="lg"
+                  className="w-full mb-6"
                 >
-                  Cancel
+                  📝 Manual Entry from TCGplayer
                 </Button>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Add Customer Modal */}
-        {showAddCustomerModal && (
-          <div 
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-            style={{ zIndex: 9999 }}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                console.log('🔘 Backdrop clicked - closing modal');
-                setShowAddCustomerModal(false);
-              }
-            }}
-          >
-            <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full border-4 border-purple-500" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-2xl font-bold mb-2 text-purple-600">➕ Add Customer</h2>
-              <p className="text-gray-600 mb-6 text-sm">Add a new consignment customer</p>
-              
-              {/* Debug indicator */}
-              <div className="bg-yellow-100 border border-yellow-400 rounded p-2 mb-4 text-xs">
-                ⚠️ DEBUG MODE: Modal is visible!
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={newCustomer.name}
-                    onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
-                    placeholder="John Doe"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                    autoFocus
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={newCustomer.phone}
-                    onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
-                    placeholder="555-1234"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={newCustomer.email}
-                    onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
-                    placeholder="john@example.com"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <p className="text-xs text-gray-500">
-                  * At least phone or email is required
-                </p>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <Button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('🔘 Add Customer button in modal clicked!');
-                    handleAddCustomer();
-                  }}
-                  className="flex-1 bg-purple-600 hover:bg-purple-700"
-                  size="lg"
-                >
-                  Add Customer
-                </Button>
-                <Button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('🔘 Cancel button clicked');
-                    setShowAddCustomerModal(false);
-                    setNewCustomer({ name: '', phone: '', email: '' });
-                  }}
-                  variant="outline"
-                  size="lg"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Offer Screen */}
-        {step === 2 && selectedCard && (
-          <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg shadow-2xl p-8 text-white">
-            <div className="text-center mb-6">
-              <div className="text-sm font-semibold text-blue-200 mb-2">OFFER FOR CUSTOMER</div>
-              <h2 className="text-4xl font-bold mb-2">{selectedCard.name}</h2>
-              <p className="text-xl text-blue-100">{selectedCard.setName}</p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-6 mb-8">
-              <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
-                <div className="text-sm text-blue-200 mb-1">Market Price</div>
-                <div className="text-3xl font-bold">${marketPrice.toFixed(2)}</div>
-              </div>
-
-              <div className="bg-white bg-opacity-30 rounded-lg p-4 text-center border-4 border-white">
-                <div className="text-sm text-blue-100 mb-1 font-semibold">WE OFFER</div>
-                <div className="text-5xl font-bold text-green-300">${costBasis.toFixed(2)}</div>
-                <div className="text-xs text-blue-200 mt-1">
-                  ({marketPrice > 0 ? ((costBasis / marketPrice) * 100).toFixed(0) : 0}% of market)
-                </div>
-              </div>
-
-              <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
-                <div className="text-sm text-blue-200 mb-1">Our Sell Price</div>
-                <div className="text-3xl font-bold">${suggestedPrice.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Condition Selector */}
-            <div className="mb-6">
-              <div className="text-sm text-blue-200 mb-2 text-center">Adjust Condition:</div>
-              <div className="flex gap-2 justify-center flex-wrap">
-                {availableConditions.map((cond) => (
-                  <button
-                    key={cond}
-                    onClick={() => handleConditionChange(cond)}
-                    className={`px-4 py-2 rounded font-semibold transition-all ${
-                      form.getValues("condition") === cond
-                        ? "bg-white text-blue-700"
-                        : "bg-white bg-opacity-20 text-white hover:bg-opacity-30"
-                    }`}
-                  >
-                    {cond}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
-              <div className="bg-white bg-opacity-10 rounded p-3">
-                <div className="text-blue-200">Condition</div>
-                <div className="font-semibold">{form.getValues("condition")}</div>
-              </div>
-              <div className="bg-white bg-opacity-10 rounded p-3">
-                <div className="text-blue-200">Source</div>
-                <div className="font-semibold">{getProviderName(apiProvider)}</div>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <Button
-                onClick={handleDeclineOffer}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xl py-6"
-                size="lg"
-              >
-                <X className="w-6 h-6 mr-2" />
-                Decline Offer
-              </Button>
-              <Button
-                onClick={handleAcceptOffer}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xl py-6"
-                size="lg"
-              >
-                <Check className="w-6 h-6 mr-2" />
-                Accept Offer
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Details Form */}
-        {step === 3 && selectedCard && (
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <Button onClick={() => setStep(2)} variant="outline" className="mb-4">
-              ← Back to Offer
-            </Button>
-
-            <h2 className="text-xl font-semibold mb-4">Finalize Details</h2>
-
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Printing</label>
-                  <input
-                    type="text"
-                    {...form.register("printing")}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                </div>
-              </div>
-
-              {/* Acquisition Type Selector */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">
-                  How are you acquiring this card?
-                </label>
-                <select
-                  {...form.register("acquisitionType")}
-                  onChange={(e) => {
-                    const newType = e.target.value;
-                    form.setValue("acquisitionType", newType as any);
-                    
-                    if (newType !== "consignment") {
-                      form.setValue("consignorName", "");
-                      form.setValue("consignorContact", "");
-                    }
-                    
-                    if (newType === "consignment") {
-                      setCostBasis(0);
-                    } else {
-                      updatePricing(marketPrice, newType as any, form.getValues("condition"));
-                    }
-                  }}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="buy">💰 Buy (Pay Cash)</option>
-                  <option value="trade">🔄 Trade (Store Credit)</option>
-                  <option value="pull">📦 Pull (Opened Product)</option>
-                  <option value="consignment">🤝 Consignment (Sell for Customer)</option>
-                </select>
-              </div>
-
-              {/* Consignor Fields */}
-              {form.watch("acquisitionType") === "consignment" && (
-                <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-5 mb-4">
-                  <h3 className="font-semibold text-purple-900 mb-3 text-lg">
-                    🤝 Consignment Customer
-                  </h3>
-                  
-                  <div className="space-y-4">
-                    {/* Customer Dropdown */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="block text-sm font-medium">
-                          Select Customer *
-                        </label>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            console.log('🔘 Add New Customer button clicked');
-                            setShowAddCustomerModal(true);
-                          }}
-                          className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+                {searchResults.length > 0 && (
+                  <div>
+                    <h3 className="font-medium mb-3">
+                      Results ({searchResults.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto">
+                      {searchResults.map((card: any) => (
+                        <div
+                          key={card.id}
+                          onClick={() => handleSelectCard(card)}
+                          className="p-4 border rounded-lg hover:border-blue-500 hover:shadow-lg cursor-pointer transition-all bg-white"
                         >
-                          ➕ Add New
-                        </button>
+                          {card.imageUrl && (
+                            <div className="mb-3 bg-gray-100 rounded-lg p-2">
+                              <img
+                                src={card.imageUrl}
+                                alt={card.name}
+                                className="w-full h-48 object-contain rounded"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = "none";
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          <div className="font-semibold text-lg">
+                            {card.name}
+                          </div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            {card.setName}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {card.number && `#${card.number}`}{" "}
+                            {card.rarity && `• ${card.rarity}`}
+                          </div>
+                          {card.variants &&
+                          card.variants.length > 0 &&
+                          card.variants[0]?.price > 0 ? (
+                            <div className="text-xs text-blue-600 mt-2 font-medium">
+                              ${card.variants[0].price.toFixed(2)}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500 mt-2">
+                              No price
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Condition Selection Modal */}
+            {showConditionModal && tempSelectedCard && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full mx-4">
+                  <h2 className="text-2xl font-bold mb-4">Select Condition</h2>
+
+                  {/* Card Preview */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex gap-4">
+                    {tempSelectedCard.imageUrl && (
+                      <div className="flex-shrink-0">
+                        <img
+                          src={tempSelectedCard.imageUrl}
+                          alt={tempSelectedCard.name}
+                          className="w-32 h-44 object-contain rounded border border-blue-200"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
                       </div>
-                      <select
-                        value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white text-lg"
-                        required
+                    )}
+                    <div className="flex-1">
+                      <h3 className="font-bold text-lg">
+                        {tempSelectedCard.name}
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        {tempSelectedCard.setName}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {tempSelectedCard.number &&
+                          `#${tempSelectedCard.number}`}{" "}
+                        {tempSelectedCard.rarity &&
+                          `• ${tempSelectedCard.rarity}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-gray-600 mb-4">
+                    Choose the card's condition to see pricing:
+                  </p>
+
+                  {/* Condition Buttons */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+                    {availableConditions.map((condition) => (
+                      <button
+                        key={condition}
+                        onClick={() => handleConditionSelected(condition)}
+                        className="px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105"
                       >
-                        <option value="">-- Select Customer --</option>
-                        {customers.map((customer) => (
-                          <option key={customer.id} value={customer.id}>
-                            {customer.name} {customer.phone && `(${customer.phone})`}
-                          </option>
-                        ))}
-                      </select>
+                        {condition}
+                      </button>
+                    ))}
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      setShowConditionModal(false);
+                      setTempSelectedCard(null);
+                    }}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Manual Entry Modal */}
+            {showManualEntry && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                  <h2 className="text-2xl font-bold mb-2">
+                    Manual Entry from TCGplayer
+                  </h2>
+                  <p className="text-gray-600 mb-6">
+                    Enter card details and market price from TCGplayer
+                  </p>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Card Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={manualCardData.name}
+                        onChange={(e) =>
+                          setManualCardData({
+                            ...manualCardData,
+                            name: e.target.value,
+                          })
+                        }
+                        placeholder="e.g., Monkey.D.Luffy"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
                     </div>
 
-                    {/* Payout Percentage */}
                     <div>
-                      <label className="block text-sm font-medium mb-1">
-                        Customer Gets (% of sale)
+                      <label className="block text-sm font-medium mb-2">
+                        Set Name
                       </label>
-                      <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={manualCardData.setName}
+                        onChange={(e) =>
+                          setManualCardData({
+                            ...manualCardData,
+                            setName: e.target.value,
+                          })
+                        }
+                        placeholder="e.g., Romance Dawn"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Card Number
+                        </label>
+                        <input
+                          type="text"
+                          value={manualCardData.number}
+                          onChange={(e) =>
+                            setManualCardData({
+                              ...manualCardData,
+                              number: e.target.value,
+                            })
+                          }
+                          placeholder="e.g., OP01-001"
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Rarity
+                        </label>
+                        <input
+                          type="text"
+                          value={manualCardData.rarity}
+                          onChange={(e) =>
+                            setManualCardData({
+                              ...manualCardData,
+                              rarity: e.target.value,
+                            })
+                          }
+                          placeholder="e.g., SR, R, C"
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Market Price (from TCGplayer) *
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-semibold">
+                          $
+                        </span>
                         <input
                           type="number"
-                          {...form.register("consignorPayoutPercent", { valueAsNumber: true })}
+                          step="0.01"
                           min="0"
-                          max="100"
-                          className="w-28 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 text-lg font-semibold"
+                          value={manualCardData.marketPrice}
+                          onChange={(e) =>
+                            setManualCardData({
+                              ...manualCardData,
+                              marketPrice: e.target.value,
+                            })
+                          }
+                          placeholder="0.00"
+                          className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
                         />
-                        <span className="text-2xl font-bold">%</span>
                       </div>
-                    </div>
-
-                    {/* Payout Breakdown */}
-                    <div className="mt-3 p-4 bg-white border border-purple-200 rounded-lg">
-                      <div className="text-sm font-semibold text-gray-700 mb-2">
-                        When sold for ${suggestedPrice.toFixed(2)}:
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div className="text-purple-700">
-                          <span className="font-medium">Customer gets:</span>
-                          <div className="text-2xl font-bold">
-                            ${(suggestedPrice * ((form.watch("consignorPayoutPercent") || 60) / 100)).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="text-green-700">
-                          <span className="font-medium">Shop keeps:</span>
-                          <div className="text-2xl font-bold">
-                            ${(suggestedPrice * (1 - (form.watch("consignorPayoutPercent") || 60) / 100)).toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Enter the current market price from TCGplayer
+                      </p>
                     </div>
                   </div>
-                </div>
-              )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Quantity *</label>
-                  <input
-                    type="number"
-                    {...form.register("quantity", { valueAsNumber: true })}
-                    min="1"
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-2">Location *</label>
-                  <input
-                    type="text"
-                    {...form.register("location")}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Notes</label>
-                <textarea
-                  {...form.register("notes")}
-                  rows={2}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-
-              <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-                <h3 className="font-semibold mb-4">💰 Final Pricing</h3>
-                <div className="grid grid-cols-4 gap-4">
-                  <div>
-                    <label className="text-xs text-gray-600">Market</label>
-                    <div className="text-xl font-bold">${marketPrice.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600">We Pay</label>
-                    <div className="text-xl font-bold text-red-600">${costBasis.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600">We Sell</label>
-                    <div className="text-xl font-bold text-green-600">${suggestedPrice.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600">Profit</label>
-                    <div className="text-xl font-bold text-blue-600">${profit.toFixed(2)}</div>
+                  <div className="flex gap-3 mt-6">
+                    <Button
+                      onClick={handleManualSubmit}
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      size="lg"
+                    >
+                      Continue
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setShowManualEntry(false);
+                        setManualCardData({
+                          name: "",
+                          setName: "",
+                          number: "",
+                          rarity: "",
+                          marketPrice: "",
+                        });
+                      }}
+                      variant="outline"
+                      size="lg"
+                    >
+                      Cancel
+                    </Button>
                   </div>
                 </div>
               </div>
+            )}
 
-              <Button
-                type="submit"
-                className="w-full bg-green-600 hover:bg-green-700"
-                size="lg"
-                disabled={loading}
+            {/* Add Customer Modal */}
+            {showAddCustomerModal && (
+              <div
+                className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+                style={{ zIndex: 9999 }}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    setShowAddCustomerModal(false);
+                  }
+                }}
               >
-                {loading ? "Adding..." : "Add to Inventory"}
-              </Button>
-            </form>
-          </div>
-        )}
+                <div
+                  className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h2 className="text-2xl font-bold mb-2">➕ Add Customer</h2>
+                  <p className="text-gray-600 mb-6 text-sm">
+                    Add a new consignment customer
+                  </p>
 
-        {/* Session Summary */}
-        {sessionCards.length > 0 && step === 1 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {acceptedCards.length > 0 && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="font-semibold text-green-600 mb-3">
-                  ✓ Accepted ({acceptedCards.length})
-                </h3>
-                <div className="space-y-2">
-                  {acceptedCards.map((sc, idx) => (
-                    <div key={idx} className="text-sm bg-green-50 p-2 rounded">
-                      <div className="font-medium">{sc.card.name}</div>
-                      <div className="text-xs text-gray-600">Paid: ${sc.buyPrice.toFixed(2)}</div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={newCustomer.name}
+                        onChange={(e) =>
+                          setNewCustomer({
+                            ...newCustomer,
+                            name: e.target.value,
+                          })
+                        }
+                        placeholder="John Doe"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                        autoFocus
+                      />
                     </div>
-                  ))}
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Phone
+                      </label>
+                      <input
+                        type="tel"
+                        value={newCustomer.phone}
+                        onChange={(e) =>
+                          setNewCustomer({
+                            ...newCustomer,
+                            phone: e.target.value,
+                          })
+                        }
+                        placeholder="555-1234"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={newCustomer.email}
+                        onChange={(e) =>
+                          setNewCustomer({
+                            ...newCustomer,
+                            email: e.target.value,
+                          })
+                        }
+                        placeholder="john@example.com"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Vendor Code
+                      </label>
+                      <input
+                        type="text"
+                        value={newCustomer.vendorCode}
+                        onChange={(e) =>
+                          setNewCustomer({
+                            ...newCustomer,
+                            vendorCode: e.target.value.toUpperCase(),
+                          })
+                        }
+                        placeholder="CUST01 (optional)"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 font-mono uppercase"
+                        maxLength={10}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Optional code for this customer's consignments
+                      </p>
+                    </div>
+
+                    <p className="text-xs text-gray-500">
+                      * At least phone or email is required
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 mt-6">
+                    <Button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleAddCustomer();
+                      }}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700"
+                      size="lg"
+                    >
+                      Add Customer
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowAddCustomerModal(false);
+                        setNewCustomer({
+                          name: "",
+                          phone: "",
+                          email: "",
+                          vendorCode: "",
+                        });
+                      }}
+                      variant="outline"
+                      size="lg"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {declinedCards.length > 0 && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="font-semibold text-red-600 mb-3">
-                  ✗ Declined ({declinedCards.length})
-                </h3>
-                <div className="space-y-2">
-                  {declinedCards.map((sc, idx) => (
-                    <div key={idx} className="text-sm bg-gray-50 p-2 rounded opacity-60">
-                      <div className="font-medium">{sc.card.name}</div>
-                      <div className="text-xs text-gray-600">Offered: ${sc.buyPrice.toFixed(2)}</div>
+            {/* Step 2: Offer Screen */}
+            {step === 2 && selectedCard && (
+              <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg shadow-2xl p-8 text-white">
+                <div className="text-center mb-6">
+                  <div className="text-sm font-semibold text-blue-200 mb-2">
+                    OFFER FOR CUSTOMER
+                  </div>
+                  <h2 className="text-4xl font-bold mb-2">
+                    {selectedCard.name}
+                  </h2>
+                  <p className="text-xl text-blue-100">
+                    {selectedCard.setName}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-6 mb-8">
+                  <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
+                    <div className="text-sm text-blue-200 mb-1">
+                      Market Price
                     </div>
-                  ))}
+                    <div className="text-3xl font-bold">
+                      ${marketPrice.toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div className="bg-white bg-opacity-30 rounded-lg p-4 text-center border-4 border-white">
+                    <div className="text-sm text-blue-100 mb-1 font-semibold">
+                      WE OFFER
+                    </div>
+                    <div className="text-5xl font-bold text-green-300">
+                      ${costBasis.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-blue-200 mt-1">
+                      (
+                      {marketPrice > 0
+                        ? ((costBasis / marketPrice) * 100).toFixed(0)
+                        : 0}
+                      % of market)
+                    </div>
+                  </div>
+
+                  <div className="bg-white bg-opacity-20 rounded-lg p-4 text-center">
+                    <div className="text-sm text-blue-200 mb-1">
+                      Our Sell Price
+                    </div>
+                    <div className="text-3xl font-bold">
+                      ${suggestedPrice.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Condition Selector */}
+                <div className="mb-6">
+                  <div className="text-sm text-blue-200 mb-2 text-center">
+                    Adjust Condition:
+                  </div>
+                  <div className="flex gap-2 justify-center flex-wrap">
+                    {availableConditions.map((cond) => (
+                      <button
+                        key={cond}
+                        onClick={() => handleConditionChange(cond)}
+                        className={`px-4 py-2 rounded font-semibold transition-all ${
+                          form.getValues("condition") === cond
+                            ? "bg-white text-blue-700"
+                            : "bg-white bg-opacity-20 text-white hover:bg-opacity-30"
+                        }`}
+                      >
+                        {cond}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+                  <div className="bg-white bg-opacity-10 rounded p-3">
+                    <div className="text-blue-200">Condition</div>
+                    <div className="font-semibold">
+                      {form.getValues("condition")}
+                    </div>
+                  </div>
+                  <div className="bg-white bg-opacity-10 rounded p-3">
+                    <div className="text-blue-200">Source</div>
+                    <div className="font-semibold">
+                      {getProviderName(apiProvider)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <Button
+                    onClick={handleDeclineOffer}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xl py-6"
+                    size="lg"
+                  >
+                    <X className="w-6 h-6 mr-2" />
+                    Decline Offer
+                  </Button>
+                  <Button
+                    onClick={handleAcceptOffer}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xl py-6"
+                    size="lg"
+                  >
+                    <Check className="w-6 h-6 mr-2" />
+                    Accept Offer
+                  </Button>
                 </div>
               </div>
             )}
+
+            {/* Step 3: Details Form */}
+            {step === 3 && selectedCard && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <Button
+                  onClick={() => setStep(2)}
+                  variant="outline"
+                  className="mb-4"
+                >
+                  ← Back to Offer
+                </Button>
+
+                <h2 className="text-xl font-semibold mb-4">Finalize Details</h2>
+
+                <form
+                  onSubmit={form.handleSubmit(onSubmit)}
+                  className="space-y-6"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Printing
+                      </label>
+                      <input
+                        type="text"
+                        {...form.register("printing")}
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Acquisition Type Selector */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2">
+                      How are you acquiring this card?
+                    </label>
+                    <select
+                      {...form.register("acquisitionType")}
+                      onChange={(e) => {
+                        const newType = e.target.value;
+                        form.setValue("acquisitionType", newType as any);
+
+                        if (newType !== "consignment") {
+                          form.setValue("consignorName", "");
+                          form.setValue("consignorContact", "");
+                        }
+
+                        if (newType === "consignment") {
+                          setCostBasis(0);
+                        } else {
+                          updatePricing(
+                            marketPrice,
+                            newType as any,
+                            form.getValues("condition"),
+                          );
+                        }
+                      }}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="buy">💰 Buy (Pay Cash)</option>
+                      <option value="trade">🔄 Trade (Store Credit)</option>
+                      <option value="pull">📦 Pull (Opened Product)</option>
+                      <option value="consignment">
+                        🤝 Consignment (Sell for Customer)
+                      </option>
+                    </select>
+                  </div>
+
+                  {/* Consignor Fields */}
+                  {form.watch("acquisitionType") === "consignment" && (
+                    <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-5 mb-4">
+                      <h3 className="font-semibold text-purple-900 mb-3 text-lg">
+                        🤝 Consignment Customer
+                      </h3>
+
+                      <div className="space-y-4">
+                        {/* Customer Dropdown */}
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="block text-sm font-medium">
+                              Select Customer *
+                            </label>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setShowAddCustomerModal(true);
+                              }}
+                              className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+                            >
+                              ➕ Add New
+                            </button>
+                          </div>
+                          <select
+                            value={selectedCustomerId}
+                            onChange={(e) =>
+                              setSelectedCustomerId(e.target.value)
+                            }
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white text-lg"
+                            required
+                          >
+                            <option value="">-- Select Customer --</option>
+                            {customers.map((customer) => (
+                              <option key={customer.id} value={customer.id}>
+                                {customer.name}{" "}
+                                {customer.phone && `(${customer.phone})`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Payout Percentage */}
+                        <div>
+                          <label className="block text-sm font-medium mb-1">
+                            Customer Gets (% of sale)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              {...form.register("consignorPayoutPercent", {
+                                valueAsNumber: true,
+                              })}
+                              min="0"
+                              max="100"
+                              className="w-28 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 text-lg font-semibold"
+                            />
+                            <span className="text-2xl font-bold">%</span>
+                          </div>
+                        </div>
+
+                        {/* Payout Breakdown */}
+                        <div className="mt-3 p-4 bg-white border border-purple-200 rounded-lg">
+                          <div className="text-sm font-semibold text-gray-700 mb-2">
+                            When sold for ${suggestedPrice.toFixed(2)}:
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="text-purple-700">
+                              <span className="font-medium">
+                                Customer gets:
+                              </span>
+                              <div className="text-2xl font-bold">
+                                $
+                                {(
+                                  suggestedPrice *
+                                  ((form.watch("consignorPayoutPercent") ||
+                                    60) /
+                                    100)
+                                ).toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="text-green-700">
+                              <span className="font-medium">Shop keeps:</span>
+                              <div className="text-2xl font-bold">
+                                $
+                                {(
+                                  suggestedPrice *
+                                  (1 -
+                                    (form.watch("consignorPayoutPercent") ||
+                                      60) /
+                                      100)
+                                ).toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        {...form.register("quantity", { valueAsNumber: true })}
+                        min="1"
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Location *
+                      </label>
+                      <input
+                        type="text"
+                        {...form.register("location")}
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Notes
+                    </label>
+                    <textarea
+                      {...form.register("notes")}
+                      rows={2}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+                    <h3 className="font-semibold mb-4">💰 Final Pricing</h3>
+                    <div className="grid grid-cols-4 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-600">Market</label>
+                        <div className="text-xl font-bold">
+                          ${marketPrice.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600">We Pay</label>
+                        <div className="text-xl font-bold text-red-600">
+                          ${costBasis.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600">We Sell</label>
+                        <div className="text-xl font-bold text-green-600">
+                          ${suggestedPrice.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600">Profit</label>
+                        <div className="text-xl font-bold text-blue-600">
+                          ${profit.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="submit"
+                    className="w-full bg-green-600 hover:bg-green-700"
+                    size="lg"
+                    disabled={loading}
+                  >
+                    {loading ? "Adding..." : "Add to Inventory"}
+                  </Button>
+                </form>
+              </div>
+            )}
+
+            {/* Session Summary */}
+            {sessionCards.length > 0 && step === 1 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {acceptedCards.length > 0 && (
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <h3 className="font-semibold text-green-600 mb-3">
+                      ✓ Accepted ({acceptedCards.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {acceptedCards.map((sc, idx) => (
+                        <div
+                          key={idx}
+                          className="text-sm bg-green-50 p-2 rounded"
+                        >
+                          <div className="font-medium">{sc.card.name}</div>
+                          <div className="text-xs text-gray-600">
+                            Paid: ${sc.buyPrice.toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {declinedCards.length > 0 && (
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <h3 className="font-semibold text-red-600 mb-3">
+                      ✗ Declined ({declinedCards.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {declinedCards.map((sc, idx) => (
+                        <div
+                          key={idx}
+                          className="text-sm bg-gray-50 p-2 rounded opacity-60"
+                        >
+                          <div className="font-medium">{sc.card.name}</div>
+                          <div className="text-xs text-gray-600">
+                            Offered: ${sc.buyPrice.toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+        ) : (
+          <BulkUploadTab />
         )}
       </div>
     </div>

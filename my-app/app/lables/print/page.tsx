@@ -1,450 +1,591 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { InventoryItem } from "@/types/inventory";
-import { generateLabelPDF } from "@/lib/labels/generator";
-import { Printer, Download, CheckSquare, Square } from "lucide-react";
 
-export default function PrintLabelsPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [labelSize, setLabelSize] = useState<"standard" | "large" | "custom">(
-    "standard",
+interface InventoryItem {
+  id: string;
+  sku?: string;
+  cardName: string;
+  setName: string;
+  condition: string;
+  sellPrice: number;
+  acquisitionType?: string;
+  customerVendorCode?: string;
+  vendorCode?: string;
+  labelPrinted?: boolean;
+  labelPrintedAt?: string;
+  labelPrintCount?: number;
+  game?: string;
+  number?: string;
+}
+
+export default function LabelsPage() {
+  const [needToPrint, setNeedToPrint] = useState<InventoryItem[]>([]);
+  const [previouslyPrinted, setPreviouslyPrinted] = useState<InventoryItem[]>(
+    [],
   );
-  const [customWidth, setCustomWidth] = useState(2.0);
-  const [customHeight, setCustomHeight] = useState(1.0);
-  const [statusFilter, setStatusFilter] = useState<string>("priced");
+  const [loading, setLoading] = useState(true);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [vendorCode, setVendorCode] = useState("");
+  const [showVendorSetup, setShowVendorSetup] = useState(false);
 
   useEffect(() => {
-    loadInventory();
+    loadVendorCode();
+    loadItems();
   }, []);
 
-  const loadInventory = async () => {
-    setLoading(true);
-    try {
-      const inventoryRef = collection(db, "inventory");
-      const snapshot = await getDocs(inventoryRef);
+  const loadVendorCode = () => {
+    const saved = localStorage.getItem("storeVendorCode");
+    if (saved) {
+      setVendorCode(saved);
+    } else {
+      setShowVendorSetup(true);
+    }
+  };
 
-      const loadedItems = snapshot.docs.map((doc) => ({
+  const saveVendorCode = () => {
+    if (vendorCode.trim()) {
+      localStorage.setItem("storeVendorCode", vendorCode.toUpperCase());
+      setShowVendorSetup(false);
+      toast.success("Vendor code saved!");
+    }
+  };
+
+  const loadItems = async () => {
+    try {
+      setLoading(true);
+      const snapshot = await getDocs(collection(db, "inventory"));
+      const allItems = snapshot.docs.map((doc) => ({
+        id: doc.id,
         ...doc.data(),
-        sku: doc.id,
       })) as InventoryItem[];
 
-      // Sort by status (priced items first)
-      const sorted = loadedItems.sort((a, b) => {
-        if (a.status === "priced" && b.status !== "priced") return -1;
-        if (a.status !== "priced" && b.status === "priced") return 1;
-        return 0;
-      });
+      console.log("📦 Loaded items:", allItems.length);
+      console.log("🔍 Sample item:", allItems[0]);
 
-      setItems(sorted);
-      toast.success(`Loaded ${sorted.length} items`);
-    } catch (error: any) {
-      console.error("Failed to load inventory:", error);
-      toast.error("Failed to load inventory");
+      const needPrint = allItems.filter((item) => !item.labelPrinted);
+      const printed = allItems
+        .filter((item) => item.labelPrinted)
+        .sort((a, b) =>
+          (b.labelPrintedAt || "").localeCompare(a.labelPrintedAt || ""),
+        );
+
+      console.log("📋 Need to print:", needPrint.length);
+      console.log("✅ Already printed:", printed.length);
+
+      // Log consignment items specifically
+      const consignments = allItems.filter(
+        (item) => item.acquisitionType === "consignment",
+      );
+      console.log("🤝 Consignment items:", consignments.length);
+      if (consignments.length > 0) {
+        console.log("🔍 Sample consignment:", {
+          id: consignments[0].id,
+          sku: consignments[0].sku,
+          acquisitionType: consignments[0].acquisitionType,
+          customerVendorCode: consignments[0].customerVendorCode,
+        });
+      }
+
+      setNeedToPrint(needPrint);
+      setPreviouslyPrinted(printed);
+    } catch (error) {
+      console.error("Error loading items:", error);
+      toast.error("Failed to load items");
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleItem = (sku: string) => {
+  const generateBarcodeValue = (item: InventoryItem) => {
+    let barcode = "";
+
+    // Priority 1: If item has a custom SKU field, use it
+    if (item.sku) {
+      barcode = item.sku;
+      console.log(`🏷️ Using SKU field for ${item.cardName}:`, barcode);
+      return barcode;
+    }
+
+    // Priority 2: For consignment items, the document ID itself is the custom SKU
+    if (item.acquisitionType === "consignment") {
+      barcode = item.id; // Document ID is the custom SKU for consignments
+      console.log(
+        `🤝 Consignment - using document ID as barcode for ${item.cardName}:`,
+        barcode,
+      );
+      return barcode;
+    }
+
+    // Priority 3: For non-consignment, use store vendor code + ID
+    barcode = vendorCode ? `${vendorCode}-${item.id}` : item.id;
+    console.log(`🏪 Store barcode for ${item.cardName}:`, barcode);
+    return barcode;
+  };
+
+  const markAsPrinted = async (itemIds: string[]) => {
+    try {
+      for (const itemId of itemIds) {
+        const item = needToPrint.find((i) => i.id === itemId);
+        const updateData: any = {
+          labelPrinted: true,
+          labelPrintedAt: new Date().toISOString(),
+          labelPrintCount: 1,
+        };
+
+        // Only save store vendor code if not a consignment item
+        // (consignment items already have customerVendorCode)
+        if (item?.acquisitionType !== "consignment") {
+          updateData.vendorCode = vendorCode || null;
+        }
+
+        await updateDoc(doc(db, "inventory", itemId), updateData);
+      }
+
+      toast.success(`Marked ${itemIds.length} item(s) as printed`);
+      setSelectedItems(new Set());
+      loadItems();
+    } catch (error) {
+      console.error("Error marking as printed:", error);
+      toast.error("Failed to mark as printed");
+    }
+  };
+
+  const reprintLabel = async (item: InventoryItem) => {
+    // Open print window for single item
+    printLabels([item], true);
+
+    // Update print count
+    try {
+      const newCount = (item.labelPrintCount || 0) + 1;
+      await updateDoc(doc(db, "inventory", item.id), {
+        labelPrintedAt: new Date().toISOString(),
+        labelPrintCount: newCount,
+      });
+      loadItems();
+    } catch (error) {
+      console.error("Error updating reprint:", error);
+    }
+  };
+
+  const moveToNeedPrint = async (itemId: string) => {
+    try {
+      await updateDoc(doc(db, "inventory", itemId), {
+        labelPrinted: false,
+        labelPrintedAt: null,
+      });
+
+      toast.success("Moved back to print queue");
+      loadItems();
+    } catch (error) {
+      console.error("Error moving to queue:", error);
+      toast.error("Failed to move to queue");
+    }
+  };
+
+  const toggleSelect = (itemId: string) => {
     const newSelected = new Set(selectedItems);
-    if (newSelected.has(sku)) {
-      newSelected.delete(sku);
+    if (newSelected.has(itemId)) {
+      newSelected.delete(itemId);
     } else {
-      newSelected.add(sku);
+      newSelected.add(itemId);
     }
     setSelectedItems(newSelected);
   };
 
-  const toggleAll = () => {
-    const filtered = getFilteredItems();
-    if (selectedItems.size === filtered.length) {
-      setSelectedItems(new Set());
-    } else {
-      setSelectedItems(new Set(filtered.map((item) => item.sku)));
-    }
+  const selectAll = () => {
+    setSelectedItems(new Set(needToPrint.map((item) => item.id)));
   };
 
-  const getFilteredItems = () => {
-    if (statusFilter === "all") return items;
-    return items.filter((item) => item.status === statusFilter);
+  const deselectAll = () => {
+    setSelectedItems(new Set());
   };
 
-  const handleGenerateLabels = async () => {
-    if (selectedItems.size === 0) {
-      toast.error("Please select at least one item");
+  const printLabels = (items: InventoryItem[], isReprint = false) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Pop-up blocked! Please allow pop-ups.");
       return;
     }
 
-    setGenerating(true);
-    try {
-      // Get selected items
-      const itemsToLabel = items.filter((item) => selectedItems.has(item.sku));
+    const labelsHTML = items
+      .map((item) => {
+        const barcode = generateBarcodeValue(item);
+        return `
+        <div class="label">
+          <div class="card-name">${item.cardName}</div>
+          <div class="set-info">${item.setName} #${item.number || "N/A"}</div>
+          <div class="condition-price">
+            <span class="condition">${item.condition}</span>
+            <span class="price">$${item.sellPrice.toFixed(2)}</span>
+          </div>
+          <div class="barcode-container">
+            <svg class="barcode"></svg>
+            <div class="barcode-text">${barcode}</div>
+          </div>
+        </div>
+      `;
+      })
+      .join("");
 
-      console.log(`Generating ${itemsToLabel.length} labels...`);
-      toast.loading(`Generating ${itemsToLabel.length} labels...`);
-
-      // Determine template to use
-      const template =
-        labelSize === "custom"
-          ? { width: customWidth, height: customHeight }
-          : labelSize;
-
-      // Generate PDF
-      const pdfBlob = await generateLabelPDF(itemsToLabel, template);
-
-      // Download PDF
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `labels-${new Date().getTime()}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      // Update status to 'labeled'
-      const updatePromises = itemsToLabel.map((item) =>
-        updateDoc(doc(db, "inventory", item.sku), {
-          status: "labeled",
-          updatedAt: new Date(),
-        }),
-      );
-      await Promise.all(updatePromises);
-
-      // Update local state
-      setItems(
-        items.map((item) =>
-          selectedItems.has(item.sku)
-            ? { ...item, status: "labeled" as const }
-            : item,
-        ),
-      );
-
-      toast.success(`Generated ${itemsToLabel.length} labels!`);
-      setSelectedItems(new Set());
-    } catch (error: any) {
-      console.error("Failed to generate labels:", error);
-      toast.error(`Failed to generate labels: ${error.message}`);
-    } finally {
-      setGenerating(false);
-    }
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Print Labels</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; }
+          .label {
+            width: 2.5in;
+            height: 1.25in;
+            border: 1px solid #000;
+            padding: 6px;
+            margin: 4px;
+            display: inline-block;
+            page-break-inside: avoid;
+          }
+          .card-name {
+            font-size: 11pt;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+          }
+          .set-info {
+            font-size: 8pt;
+            color: #666;
+            margin-bottom: 3px;
+          }
+          .condition-price {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+          }
+          .condition {
+            font-size: 8pt;
+            font-weight: bold;
+          }
+          .price {
+            font-size: 14pt;
+            font-weight: bold;
+          }
+          .barcode-container {
+            text-align: center;
+          }
+          .barcode {
+            height: 30px;
+          }
+          .barcode-text {
+            font-size: 7pt;
+            margin-top: 2px;
+            font-family: monospace;
+          }
+          @media print {
+            body { padding: 0; }
+            .label { 
+              border: 1px solid #000;
+              margin: 2px;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${labelsHTML}
+        <script>
+          const barcodes = document.querySelectorAll('.barcode');
+          const barcodeTexts = document.querySelectorAll('.barcode-text');
+          
+          barcodes.forEach((barcode, index) => {
+            const code = barcodeTexts[index].textContent;
+            JsBarcode(barcode, code, {
+              format: 'CODE128',
+              width: 1.5,
+              height: 30,
+              displayValue: false,
+              margin: 0
+            });
+          });
+          
+          setTimeout(() => {
+            window.print();
+            ${!isReprint ? "window.close();" : ""}
+          }, 500);
+        </script>
+      </body>
+      </html>
+    `);
   };
 
-  const filteredItems = getFilteredItems();
-  const allSelected =
-    filteredItems.length > 0 && selectedItems.size === filteredItems.length;
+  const printSelected = () => {
+    const itemsToPrint = needToPrint.filter((item) =>
+      selectedItems.has(item.id),
+    );
+    printLabels(itemsToPrint);
+
+    setTimeout(() => {
+      if (confirm("Mark selected items as printed?")) {
+        markAsPrinted(Array.from(selectedItems));
+      }
+    }, 1000);
+  };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-lg font-medium">Loading inventory...</div>
-        </div>
-      </div>
-    );
+    return <div className="p-8">Loading labels...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto p-6 max-w-6xl">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2">Print Labels</h1>
-          <p className="text-gray-600">
-            Select items to print price labels with barcodes
-          </p>
-        </div>
-
-        {/* Controls */}
-        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-            {/* Status Filter */}
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Filter by Status
-              </label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Items</option>
-                <option value="priced">Ready to Label (Priced)</option>
-                <option value="pending">Pending</option>
-                <option value="labeled">Already Labeled</option>
-                <option value="listed">Listed in POS</option>
-              </select>
-            </div>
-
-            {/* Selection Info */}
-            <div className="flex items-end">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 w-full">
-                <div className="text-sm font-medium text-blue-900">
-                  {selectedItems.size} selected
-                </div>
-                <div className="text-xs text-blue-700">
-                  {filteredItems.length} available
-                </div>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-4xl font-bold">🏷️ Print Labels</h1>
+          <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <div className="text-gray-600">Vendor Code:</div>
+              <div className="font-mono font-bold">
+                {vendorCode || "Not Set"}
               </div>
             </div>
-          </div>
-
-          {/* Label Size Configuration */}
-          <div className="border-t pt-4 mb-4">
-            <label className="block text-sm font-medium mb-3">Label Size</label>
-
-            {/* Preset Buttons */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <button
-                onClick={() => {
-                  setLabelSize("standard");
-                  setCustomWidth(2.0);
-                  setCustomHeight(1.0);
-                }}
-                className={`p-3 border-2 rounded-lg text-sm font-medium transition ${
-                  labelSize === "standard"
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 hover:border-blue-300"
-                }`}
-              >
-                <div className="font-semibold">Standard</div>
-                <div className="text-xs text-gray-600">2.0" × 1.0"</div>
-                <div className="text-xs text-gray-500">Avery 5160</div>
-              </button>
-
-              <button
-                onClick={() => {
-                  setLabelSize("large");
-                  setCustomWidth(2.25);
-                  setCustomHeight(1.25);
-                }}
-                className={`p-3 border-2 rounded-lg text-sm font-medium transition ${
-                  labelSize === "large"
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 hover:border-blue-300"
-                }`}
-              >
-                <div className="font-semibold">Large</div>
-                <div className="text-xs text-gray-600">2.25" × 1.25"</div>
-                <div className="text-xs text-gray-500">Avery 5163</div>
-              </button>
-
-              <button
-                onClick={() => {
-                  setLabelSize("custom");
-                  setCustomWidth(4.0);
-                  setCustomHeight(2.0);
-                }}
-                className={`p-3 border-2 rounded-lg text-sm font-medium transition ${
-                  labelSize === "custom" &&
-                  customWidth === 4.0 &&
-                  customHeight === 2.0
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 hover:border-blue-300"
-                }`}
-              >
-                <div className="font-semibold">Dymo 4×2</div>
-                <div className="text-xs text-gray-600">4.0" × 2.0"</div>
-                <div className="text-xs text-gray-500">Thermal</div>
-              </button>
-
-              <button
-                onClick={() => {
-                  setLabelSize("custom");
-                  setCustomWidth(4.0);
-                  setCustomHeight(3.0);
-                }}
-                className={`p-3 border-2 rounded-lg text-sm font-medium transition ${
-                  labelSize === "custom" &&
-                  customWidth === 4.0 &&
-                  customHeight === 3.0
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 hover:border-blue-300"
-                }`}
-              >
-                <div className="font-semibold">Dymo 4×3</div>
-                <div className="text-xs text-gray-600">4.0" × 3.0"</div>
-                <div className="text-xs text-gray-500">Thermal</div>
-              </button>
-            </div>
-
-            {/* Custom Size Inputs */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <input
-                  type="checkbox"
-                  checked={labelSize === "custom"}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setLabelSize("custom");
-                    } else {
-                      setLabelSize("standard");
-                      setCustomWidth(2.0);
-                      setCustomHeight(1.0);
-                    }
-                  }}
-                  className="w-4 h-4 text-blue-600"
-                />
-                <label className="text-sm font-medium">Custom Size</label>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    Width (inches)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    max="8"
-                    value={customWidth}
-                    onChange={(e) => {
-                      setCustomWidth(parseFloat(e.target.value));
-                      setLabelSize("custom");
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    Height (inches)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0.5"
-                    max="6"
-                    value={customHeight}
-                    onChange={(e) => {
-                      setCustomHeight(parseFloat(e.target.value));
-                      setLabelSize("custom");
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-2 text-xs text-gray-600">
-                Current: {customWidth}" × {customHeight}"
-                {labelSize !== "custom" && " (using preset)"}
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3">
-            <Button onClick={toggleAll} variant="outline" className="flex-1">
-              <CheckSquare className="w-4 h-4 mr-2" />
-              {allSelected ? "Deselect All" : "Select All"}
-            </Button>
             <Button
-              onClick={handleGenerateLabels}
-              disabled={selectedItems.size === 0 || generating}
-              className="flex-1 bg-blue-600 hover:bg-blue-700"
-              size="lg"
+              onClick={() => setShowVendorSetup(true)}
+              variant="outline"
+              size="sm"
             >
-              <Printer className="w-4 h-4 mr-2" />
-              {generating
-                ? "Generating..."
-                : `Generate ${selectedItems.size} Labels`}
+              Change Code
             </Button>
           </div>
         </div>
 
-        {/* Item Selection Grid */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h2 className="text-xl font-semibold mb-4">Select Items</h2>
-
-          {filteredItems.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <Printer className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p className="text-lg font-medium">No items to label</p>
-              <p className="text-sm mt-1">
-                {statusFilter === "priced"
-                  ? "Add items via the Intake page first"
-                  : "Try changing the status filter"}
+        {/* Vendor Code Setup Modal */}
+        {showVendorSetup && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-8 max-w-md w-full">
+              <h2 className="text-2xl font-bold mb-4">Set Vendor Code</h2>
+              <p className="text-gray-600 mb-4">
+                This code will be included in all barcodes (e.g., STORE-12345)
               </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredItems.map((item) => {
-                const isSelected = selectedItems.has(item.sku);
-                return (
-                  <div
-                    key={item.sku}
-                    onClick={() => toggleItem(item.sku)}
-                    className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                      isSelected
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:border-blue-300 bg-white"
-                    }`}
+              <input
+                type="text"
+                value={vendorCode}
+                onChange={(e) => setVendorCode(e.target.value.toUpperCase())}
+                placeholder="Enter code (e.g., STORE)"
+                className="w-full px-4 py-2 border rounded-lg mb-4 font-mono text-lg"
+                maxLength={10}
+              />
+              <div className="flex gap-3">
+                <Button
+                  onClick={saveVendorCode}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700"
+                >
+                  Save
+                </Button>
+                {vendorCode && (
+                  <Button
+                    onClick={() => setShowVendorSetup(false)}
+                    variant="outline"
+                    className="flex-1"
                   >
-                    {/* Selection Checkbox */}
-                    <div className="absolute top-3 right-3">
-                      {isSelected ? (
-                        <CheckSquare className="w-6 h-6 text-blue-600" />
-                      ) : (
-                        <Square className="w-6 h-6 text-gray-300" />
-                      )}
-                    </div>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
-                    {/* Card Info */}
-                    <div className="pr-8">
-                      <div className="font-semibold text-gray-900 mb-1">
-                        {item.cardName}
-                      </div>
-                      <div className="text-sm text-gray-600 mb-2">
+        {/* Need to Print Section */}
+        <div className="bg-white rounded-lg shadow mb-8">
+          <div className="p-6 border-b bg-blue-50">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-semibold">
+                📋 Need to Print ({needToPrint.length})
+              </h2>
+              <div className="flex gap-2">
+                <Button onClick={selectAll} variant="outline" size="sm">
+                  Select All
+                </Button>
+                <Button onClick={deselectAll} variant="outline" size="sm">
+                  Deselect All
+                </Button>
+                {selectedItems.size > 0 && (
+                  <>
+                    <Button
+                      onClick={printSelected}
+                      className="bg-blue-600 hover:bg-blue-700"
+                      size="sm"
+                    >
+                      Print Selected ({selectedItems.size})
+                    </Button>
+                    <Button
+                      onClick={() => markAsPrinted(Array.from(selectedItems))}
+                      className="bg-green-600 hover:bg-green-700"
+                      size="sm"
+                    >
+                      Mark as Printed
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="p-4">
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedItems.size === needToPrint.length &&
+                        needToPrint.length > 0
+                      }
+                      onChange={(e) =>
+                        e.target.checked ? selectAll() : deselectAll()
+                      }
+                    />
+                  </th>
+                  <th className="text-left p-4 font-semibold">Card</th>
+                  <th className="text-left p-4 font-semibold">Condition</th>
+                  <th className="text-right p-4 font-semibold">Price</th>
+                  <th className="text-left p-4 font-semibold">Barcode</th>
+                </tr>
+              </thead>
+              <tbody>
+                {needToPrint.map((item) => (
+                  <tr
+                    key={item.id}
+                    className={`border-t hover:bg-gray-50 ${selectedItems.has(item.id) ? "bg-blue-50" : ""}`}
+                  >
+                    <td className="p-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedItems.has(item.id)}
+                        onChange={() => toggleSelect(item.id)}
+                      />
+                    </td>
+                    <td className="p-4">
+                      <div className="font-semibold">{item.cardName}</div>
+                      <div className="text-sm text-gray-500">
                         {item.setName}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
-                        <span className="font-mono bg-gray-100 px-2 py-1 rounded">
-                          {item.sku}
-                        </span>
-                        <span className="font-semibold">{item.condition}</span>
-                      </div>
-                      <div className="flex items-center justify-between mt-3 pt-3 border-t">
-                        <span className="text-lg font-bold text-green-600">
-                          ${(item.sellPrice || 0).toFixed(2)}
-                        </span>
-                        <span
-                          className={`text-xs px-2 py-1 rounded-full ${
-                            item.status === "priced"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : item.status === "labeled"
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
-                          {item.status || "pending"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                    </td>
+                    <td className="p-4">{item.condition}</td>
+                    <td className="p-4 text-right font-bold">
+                      ${item.sellPrice.toFixed(2)}
+                    </td>
+                    <td className="p-4 font-mono text-xs">
+                      {generateBarcodeValue(item)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {needToPrint.length === 0 && (
+              <div className="p-12 text-center text-gray-500">
+                <div className="text-4xl mb-2">✅</div>
+                <div>All labels printed!</div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Info Card */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
-          <h3 className="font-semibold text-blue-900 mb-2">📋 How it works:</h3>
-          <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Select items by clicking the cards</li>
-            <li>• Choose label size (standard or large)</li>
-            <li>• Click "Generate Labels" to create PDF</li>
-            <li>• PDF downloads automatically</li>
-            <li>• Print on Avery 5160 (standard) or similar labels</li>
-            <li>• Items are marked as "labeled" after printing</li>
-          </ul>
+        {/* Previously Printed Section */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-6 border-b bg-gray-50">
+            <h2 className="text-2xl font-semibold">
+              📦 Previously Printed ({previouslyPrinted.length})
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Click Reprint to print again, or Move to Queue to reprint later
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-4 font-semibold">Card</th>
+                  <th className="text-left p-4 font-semibold">Barcode</th>
+                  <th className="text-right p-4 font-semibold">Price</th>
+                  <th className="text-center p-4 font-semibold">
+                    Times Printed
+                  </th>
+                  <th className="text-center p-4 font-semibold">
+                    Last Printed
+                  </th>
+                  <th className="text-center p-4 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {previouslyPrinted.map((item) => (
+                  <tr key={item.id} className="border-t hover:bg-gray-50">
+                    <td className="p-4">
+                      <div className="font-semibold">{item.cardName}</div>
+                      <div className="text-sm text-gray-500">
+                        {item.setName}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {item.condition}
+                      </div>
+                    </td>
+                    <td className="p-4 font-mono text-xs">
+                      {generateBarcodeValue(item)}
+                    </td>
+                    <td className="p-4 text-right font-bold">
+                      ${item.sellPrice.toFixed(2)}
+                    </td>
+                    <td className="p-4 text-center">
+                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm">
+                        {item.labelPrintCount || 1}x
+                      </span>
+                    </td>
+                    <td className="p-4 text-center text-sm">
+                      {item.labelPrintedAt
+                        ? new Date(item.labelPrintedAt).toLocaleDateString()
+                        : "N/A"}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex gap-2 justify-center">
+                        <Button
+                          onClick={() => reprintLabel(item)}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Reprint
+                        </Button>
+                        <Button
+                          onClick={() => moveToNeedPrint(item.id)}
+                          variant="outline"
+                          size="sm"
+                          className="text-orange-600"
+                        >
+                          Move to Queue
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {previouslyPrinted.length === 0 && (
+              <div className="p-12 text-center text-gray-500">
+                No labels printed yet
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
