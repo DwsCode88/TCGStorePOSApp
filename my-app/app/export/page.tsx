@@ -1,18 +1,43 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  writeBatch,
+  serverTimestamp,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { InventoryItem } from "@/types/inventory";
-import { Download, FileText } from "lucide-react";
+
+interface InventoryItem {
+  sku: string;
+  cardName?: string;
+  name?: string;
+  setName?: string;
+  set?: string;
+  game?: string;
+  condition?: string;
+  printing?: string;
+  sellPrice?: number;
+  quantity?: number;
+  acquisitionType?: string;
+  vendorCode?: string;
+  customerVendorCode?: string;
+  exportedAt?: any;
+  exportBatchId?: string;
+  [key: string]: any;
+}
 
 export default function ExportPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [allItems, setAllItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<"pending" | "exported">("pending");
+  const [batchName, setBatchName] = useState("");
 
   useEffect(() => {
     loadInventory();
@@ -26,7 +51,7 @@ export default function ExportPage() {
         ...doc.data(),
         sku: doc.id,
       })) as InventoryItem[];
-      setItems(loadedItems);
+      setAllItems(loadedItems);
     } catch (error: any) {
       console.error("Failed:", error);
       toast.error("Failed to load inventory");
@@ -35,6 +60,12 @@ export default function ExportPage() {
     }
   };
 
+  // Filter items based on export status
+  const pendingItems = allItems.filter((item) => !item.exportedAt);
+  const exportedItems = allItems.filter((item) => item.exportedAt);
+
+  const displayItems = activeTab === "pending" ? pendingItems : exportedItems;
+
   const getCategoryIDs = (item: InventoryItem): string => {
     const game = item.game?.toLowerCase() || "";
     const isGraded =
@@ -42,20 +73,14 @@ export default function ExportPage() {
       item.notes?.toLowerCase().includes("graded") ||
       item.printing?.toLowerCase().includes("graded");
 
-    // Single Cards - [683] Main
     const categories = ["683"];
 
-    // Add game-specific category
     if (game.includes("one piece")) {
-      categories.push("684"); // One Piece SUB
-      if (isGraded) {
-        categories.push("687"); // One Piece Graded SUB
-      }
+      categories.push("684");
+      if (isGraded) categories.push("687");
     } else if (game.includes("pokemon") || game.includes("pokémon")) {
-      categories.push("686"); // Pokemon SUB
-      if (isGraded) {
-        categories.push("688"); // Pokemon Graded SUB
-      }
+      categories.push("686");
+      if (isGraded) categories.push("688");
     }
 
     return categories.join(",");
@@ -64,21 +89,20 @@ export default function ExportPage() {
   const escapeCSV = (value: any): string => {
     if (value === null || value === undefined) return "";
     const str = String(value);
-    // Escape quotes and wrap in quotes if contains comma, quote, or newline
     if (str.includes(",") || str.includes('"') || str.includes("\n")) {
       return `"${str.replace(/"/g, '""')}"`;
     }
     return str;
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async (markAsExported: boolean = true) => {
     setExporting(true);
 
     try {
       const itemsToExport =
         selectedItems.size > 0
-          ? items.filter((item) => selectedItems.has(item.sku))
-          : items;
+          ? displayItems.filter((item) => selectedItems.has(item.sku))
+          : displayItems;
 
       if (itemsToExport.length === 0) {
         toast.error("No items to export");
@@ -86,127 +110,73 @@ export default function ExportPage() {
         return;
       }
 
+      const timestamp = new Date().toISOString();
+      const batchId = batchName.trim() || `batch-${timestamp.split("T")[0]}`;
+
       console.log(`📤 Exporting ${itemsToExport.length} items to CSV...`);
 
-      // Log consignment items for verification
-      const consignmentItems = itemsToExport.filter(
-        (item) => item.acquisitionType === "consignment",
-      );
-      if (consignmentItems.length > 0) {
-        console.log(`🤝 Found ${consignmentItems.length} consignment items`);
-        consignmentItems.forEach((item) => {
-          console.log(
-            `  - ${item.cardName}: Vendor Code = ${item.customerVendorCode || "None"}`,
-          );
-        });
-      }
-
-      // CSV Headers (from the template)
+      // CSV Headers
       const headers = [
-        "Category IDs (Comma separate)",
-        "Dept Code",
-        "Status",
-        "Product Title",
-        "Short Description",
-        "Unit of Measurement(each/per yard)",
-        "Availability(web/store/both)",
-        "Unlimited Inventory(yes/no)",
-        "Options",
-        "Assigned option values",
-        "sku",
-        "upc",
-        "Manufacturer Product Id",
-        "Alternate Lookups",
-        "Manufacturer",
-        "Primary Vendor",
-        "Serial Number",
-        "Store Location ID",
-        "Weight",
-        "Default Cost",
+        "SKU",
+        "TCGplayer Id",
+        "Product Line",
+        "Set Name",
+        "Product Name",
+        "Title",
+        "Number",
+        "Rarity",
+        "Condition",
+        "TCG Market Price",
+        "TCG Direct Low",
+        "TCG Low Price With Shipping",
+        "TCG Low Price",
+        "Total Quantity",
+        "Add to Quantity",
+        "Printing",
+        "Language",
         "Price",
-        "Sale Price",
-        "Wholesale Price",
-        "MAP Price",
-        "Wholesale Description",
-        "Cost",
-        "Inventory",
-        "Re-Order Point",
-        "Desired Stock Level",
-        "Case Unit Qty",
-        "Retail Unit Type(items,inches,feet,yards,meters)",
-        "Case Unit Type(case,bolt,box,roll,pack)",
-        "Tax Code",
-        "Vendor Consignment (yes/no)",
-        "Alt Barcode Title",
-        "Bin Location",
+        "Photo URL",
+        "Category IDs",
+        "VENDOR_CODE",
       ];
 
+      // CSV Rows
       const rows = itemsToExport.map((item) => {
-        // Build product title
-        const title = `${item.cardName}${item.setName ? ` - ${item.setName}` : ""}`;
-
-        // Build short description
-        const description = [item.game, item.printing, item.condition]
-          .filter(Boolean)
-          .join(" | ");
+        const vendorCode = item.vendorCode || item.customerVendorCode || "";
 
         return [
-          getCategoryIDs(item), // Category IDs
-          "TCGSingles", // Dept Code (fixed)
-          "active", // Status
-          title, // Product Title
-          description, // Short Description
-          "each", // Unit of Measurement
-          "store", // Availability (store only)
-          "no", // Unlimited Inventory
-          "", // Options
-          "", // Assigned option values
-          item.sku, // sku
-          item.sku, // upc (same as SKU)
-          "", // Manufacturer Product Id
-          "", // Alternate Lookups
-          "", // Manufacturer
-          // Primary Vendor - use customer vendor code for consignments, else default
-          item.acquisitionType === "consignment" && item.customerVendorCode
-            ? item.customerVendorCode
-            : "5325102",
-          "", // Serial Number
-          "27891", // Store Location ID (fixed)
-          "", // Weight
-          (item.costBasis || 0).toFixed(2), // Default Cost
-          (item.sellPrice || 0).toFixed(2), // Price
-          "", // Sale Price
-          "", // Wholesale Price
-          "", // MAP Price
-          "", // Wholesale Description
-          (item.costBasis || 0).toFixed(2), // Cost
-          (item.quantity || 1).toString(), // Inventory
-          "", // Re-Order Point
-          "", // Desired Stock Level
-          "", // Case Unit Qty
-          "items", // Retail Unit Type
-          "", // Case Unit Type
-          "", // Tax Code
-          // Vendor Consignment - 'yes' for consignment items, 'no' otherwise
-          item.acquisitionType === "consignment" ? "yes" : "no",
-          "", // Alt Barcode Title
-          "", // Bin Location (empty)
-        ];
+          escapeCSV(item.sku),
+          escapeCSV(item.tcgplayerId || ""),
+          escapeCSV(item.game || ""),
+          escapeCSV(item.setName || item.set || ""),
+          escapeCSV(item.cardName || item.name || ""),
+          escapeCSV(item.cardName || item.name || ""),
+          escapeCSV(item.number || ""),
+          escapeCSV(item.rarity || ""),
+          escapeCSV(item.condition || "Near Mint"),
+          escapeCSV(item.marketPrice || item.sellPrice || ""),
+          "",
+          "",
+          "",
+          escapeCSV(item.quantity || 1),
+          escapeCSV(item.quantity || 1),
+          escapeCSV(item.printing || "Normal"),
+          escapeCSV(item.language || "English"),
+          escapeCSV(item.sellPrice || ""),
+          escapeCSV(item.imageUrl || ""),
+          getCategoryIDs(item),
+          escapeCSV(vendorCode),
+        ].join(",");
       });
 
-      // Build CSV content
-      const csvContent = [
-        headers.map(escapeCSV).join(","),
-        ...rows.map((row) => row.map(escapeCSV).join(",")),
-      ].join("\n");
+      const csvContent = [headers.join(","), ...rows].join("\n");
 
       // Create download
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
 
-      const timestamp = new Date().toISOString().split("T")[0];
-      const filename = `vaulttrove-inventory-export-${timestamp}.csv`;
+      const filename = `vaulttrove-${batchId}.csv`;
 
       link.setAttribute("href", url);
       link.setAttribute("download", filename);
@@ -215,13 +185,63 @@ export default function ExportPage() {
       link.click();
       document.body.removeChild(link);
 
-      toast.success(`Exported ${itemsToExport.length} items to CSV!`);
+      // Mark as exported in Firebase
+      if (markAsExported) {
+        const batch = writeBatch(db);
+
+        itemsToExport.forEach((item) => {
+          const docRef = doc(db, "inventory", item.sku);
+          batch.update(docRef, {
+            exportedAt: serverTimestamp(),
+            exportBatchId: batchId,
+            lastExportDate: timestamp,
+          });
+        });
+
+        await batch.commit();
+        console.log(`✅ Marked ${itemsToExport.length} items as exported`);
+
+        // Reload to update UI
+        await loadInventory();
+        setSelectedItems(new Set());
+      }
+
+      toast.success(`Exported ${itemsToExport.length} items to ${filename}!`);
       console.log(`✅ Exported ${itemsToExport.length} items to ${filename}`);
     } catch (error: any) {
       console.error("Export failed:", error);
       toast.error(`Export failed: ${error.message}`);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const markAsNotExported = async () => {
+    if (selectedItems.size === 0) {
+      toast.error("Please select items to mark as not exported");
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+
+      selectedItems.forEach((sku) => {
+        const docRef = doc(db, "inventory", sku);
+        batch.update(docRef, {
+          exportedAt: null,
+          exportBatchId: null,
+          lastExportDate: null,
+        });
+      });
+
+      await batch.commit();
+      toast.success(`Marked ${selectedItems.size} items as not exported`);
+
+      await loadInventory();
+      setSelectedItems(new Set());
+    } catch (error: any) {
+      console.error("Failed to update:", error);
+      toast.error("Failed to update items");
     }
   };
 
@@ -235,12 +255,12 @@ export default function ExportPage() {
     setSelectedItems(newSelected);
   };
 
-  const toggleAll = () => {
-    if (selectedItems.size === items.length) {
-      setSelectedItems(new Set());
-    } else {
-      setSelectedItems(new Set(items.map((item) => item.sku)));
-    }
+  const selectAll = () => {
+    setSelectedItems(new Set(displayItems.map((item) => item.sku)));
+  };
+
+  const deselectAll = () => {
+    setSelectedItems(new Set());
   };
 
   if (loading) {
@@ -252,149 +272,276 @@ export default function ExportPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2">Export Inventory to CSV</h1>
-        <p className="text-gray-600 mb-8">
-          Export inventory in POS-compatible format
-        </p>
-
-        {/* Info Box */}
-        <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-3">Export Format</h2>
-          <div className="space-y-2 text-sm text-gray-700">
-            <p>
-              <strong>Categories:</strong>
-            </p>
-            <ul className="ml-4 space-y-1">
-              <li>• One Piece → [683,684]</li>
-              <li>• One Piece Graded → [683,684,687]</li>
-              <li>• Pokemon → [683,686]</li>
-              <li>• Pokemon Graded → [683,686,688]</li>
-            </ul>
-            <p className="mt-3">
-              <strong>Dept Code:</strong> TCGSingles
-            </p>
-            <p>
-              <strong>Store ID:</strong> 27891
-            </p>
-            <p>
-              <strong>Vendor ID:</strong> 5325102
-            </p>
-            <p>
-              <strong>Availability:</strong> Store only
-            </p>
-            <p>
-              <strong>UPC:</strong> Same as SKU (for barcode scanning)
-            </p>
-            <p>
-              <strong>Bin Location:</strong> Not included
-            </p>
-          </div>
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">
+            Export Inventory
+          </h1>
+          <p className="text-gray-600">Export cards to TCGPlayer CSV format</p>
         </div>
 
         {/* Stats */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="grid grid-cols-3 gap-6">
-            <div>
-              <div className="text-sm text-gray-600">Total Items</div>
-              <div className="text-3xl font-bold">{items.length}</div>
+        <div className="grid grid-cols-3 gap-6 mb-6">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-3xl font-bold text-orange-600">
+              {pendingItems.length}
             </div>
-            <div>
-              <div className="text-sm text-gray-600">Selected</div>
-              <div className="text-3xl font-bold text-blue-600">
-                {selectedItems.size}
-              </div>
+            <div className="text-sm text-gray-600">Ready to Export</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-3xl font-bold text-green-600">
+              {exportedItems.length}
             </div>
-            <div>
-              <div className="text-sm text-gray-600">Total Cards</div>
-              <div className="text-3xl font-bold">
-                {items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-              </div>
+            <div className="text-sm text-gray-600">Already Exported</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-3xl font-bold text-blue-600">
+              {selectedItems.size}
             </div>
+            <div className="text-sm text-gray-600">Selected</div>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-4 mb-6">
-          <Button
-            onClick={exportToCSV}
-            disabled={exporting}
-            className="bg-green-600 hover:bg-green-700"
-            size="lg"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            {exporting
-              ? "Exporting..."
-              : `Export ${selectedItems.size > 0 ? selectedItems.size : items.length} Items`}
-          </Button>
+        {/* Tabs */}
+        <div className="bg-white rounded-lg shadow-lg mb-6">
+          <div className="border-b border-gray-200">
+            <div className="flex">
+              <button
+                onClick={() => {
+                  setActiveTab("pending");
+                  setSelectedItems(new Set());
+                }}
+                className={`px-6 py-4 font-semibold border-b-2 transition-colors ${
+                  activeTab === "pending"
+                    ? "border-orange-600 text-orange-600"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                📦 Ready to Export ({pendingItems.length})
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("exported");
+                  setSelectedItems(new Set());
+                }}
+                className={`px-6 py-4 font-semibold border-b-2 transition-colors ${
+                  activeTab === "exported"
+                    ? "border-green-600 text-green-600"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                ✅ Exported History ({exportedItems.length})
+              </button>
+            </div>
+          </div>
 
-          <Button onClick={toggleAll} variant="outline" size="lg">
-            {selectedItems.size === items.length
-              ? "Deselect All"
-              : "Select All"}
-          </Button>
+          {/* Actions */}
+          <div className="p-6">
+            {activeTab === "pending" ? (
+              <>
+                {/* Batch Name */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Batch Name (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={batchName}
+                    onChange={(e) => setBatchName(e.target.value)}
+                    placeholder="e.g., weekly-export, new-arrivals"
+                    className="w-full border border-gray-300 rounded px-4 py-2"
+                  />
+                  <div className="text-xs text-gray-500 mt-1">
+                    If not provided, will use: batch-
+                    {new Date().toISOString().split("T")[0]}
+                  </div>
+                </div>
 
-          <Button
-            onClick={() => setSelectedItems(new Set())}
-            variant="outline"
-            size="lg"
-          >
-            Clear Selection
-          </Button>
+                {/* Buttons */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => exportToCSV(true)}
+                    disabled={exporting || displayItems.length === 0}
+                    className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-lg"
+                  >
+                    {exporting
+                      ? "⏳ Exporting..."
+                      : `📤 Export ${selectedItems.size > 0 ? selectedItems.size : displayItems.length} Cards & Mark as Exported`}
+                  </button>
+
+                  <button
+                    onClick={() => exportToCSV(false)}
+                    disabled={exporting || displayItems.length === 0}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-lg"
+                  >
+                    📥 Export Without Marking
+                  </button>
+
+                  <button
+                    onClick={
+                      selectedItems.size === displayItems.length
+                        ? deselectAll
+                        : selectAll
+                    }
+                    className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg"
+                  >
+                    {selectedItems.size === displayItems.length
+                      ? "Deselect All"
+                      : "Select All"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Exported Actions */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => exportToCSV(false)}
+                    disabled={exporting || displayItems.length === 0}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-lg"
+                  >
+                    {exporting
+                      ? "⏳ Exporting..."
+                      : `📥 Re-export ${selectedItems.size > 0 ? selectedItems.size : displayItems.length} Cards`}
+                  </button>
+
+                  <button
+                    onClick={markAsNotExported}
+                    disabled={selectedItems.size === 0}
+                    className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-lg"
+                  >
+                    🔄 Mark {selectedItems.size} as Not Exported
+                  </button>
+
+                  <button
+                    onClick={
+                      selectedItems.size === displayItems.length
+                        ? deselectAll
+                        : selectAll
+                    }
+                    className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg"
+                  >
+                    {selectedItems.size === displayItems.length
+                      ? "Deselect All"
+                      : "Select All"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Selection Info */}
+            {selectedItems.size > 0 && (
+              <div className="mt-4 bg-blue-50 border border-blue-200 rounded p-3 text-sm text-blue-800">
+                {selectedItems.size} card{selectedItems.size !== 1 ? "s" : ""}{" "}
+                selected
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Items List */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold mb-4">Inventory Items</h2>
-
-          {items.length === 0 ? (
-            <p className="text-center py-12 text-gray-500">
-              No items in inventory
-            </p>
+        {/* Cards List */}
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+          {displayItems.length === 0 ? (
+            <div className="p-12 text-center text-gray-500">
+              <div className="text-6xl mb-4">
+                {activeTab === "pending" ? "📦" : "✅"}
+              </div>
+              <div className="text-xl font-semibold mb-2">
+                {activeTab === "pending"
+                  ? "All cards have been exported!"
+                  : "No exported cards yet"}
+              </div>
+              <div className="text-sm">
+                {activeTab === "pending"
+                  ? 'Check the "Exported History" tab to see exported cards'
+                  : "Cards will appear here after you export them"}
+              </div>
+            </div>
           ) : (
-            <div className="space-y-2 max-h-[600px] overflow-y-auto">
-              {items.map((item) => {
-                const isSelected = selectedItems.has(item.sku);
-                return (
-                  <div
-                    key={item.sku}
-                    onClick={() => toggleItem(item.sku)}
-                    className={`border rounded p-3 cursor-pointer flex items-center justify-between ${
-                      isSelected
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:border-blue-300"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th className="text-left p-3 w-12">
                       <input
                         type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {}}
+                        checked={
+                          selectedItems.size === displayItems.length &&
+                          displayItems.length > 0
+                        }
+                        onChange={() =>
+                          selectedItems.size === displayItems.length
+                            ? deselectAll()
+                            : selectAll()
+                        }
                         className="w-4 h-4"
                       />
-                      <div>
-                        <div className="font-semibold">{item.cardName}</div>
-                        <div className="text-sm text-gray-600">
-                          {item.game} • {item.setName} • {item.condition}
+                    </th>
+                    <th className="text-left p-3">Card</th>
+                    <th className="text-left p-3">Set</th>
+                    <th className="text-left p-3">Condition</th>
+                    <th className="text-right p-3">Price</th>
+                    <th className="text-center p-3">Qty</th>
+                    {activeTab === "exported" && (
+                      <>
+                        <th className="text-left p-3">Batch</th>
+                        <th className="text-left p-3">Exported</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayItems.map((item) => (
+                    <tr
+                      key={item.sku}
+                      className={`border-b hover:bg-gray-50 cursor-pointer ${
+                        selectedItems.has(item.sku) ? "bg-blue-50" : ""
+                      }`}
+                      onClick={() => toggleItem(item.sku)}
+                    >
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(item.sku)}
+                          onChange={() => toggleItem(item.sku)}
+                          className="w-4 h-4"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium">
+                          {item.cardName || item.name}
                         </div>
                         <div className="text-xs text-gray-500">{item.sku}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold text-green-600">
+                      </td>
+                      <td className="p-3 text-gray-600">
+                        {item.setName || item.set}
+                      </td>
+                      <td className="p-3 text-gray-600">{item.condition}</td>
+                      <td className="p-3 text-right font-semibold text-green-600">
                         ${(item.sellPrice || 0).toFixed(2)}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Qty: {item.quantity || 1}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        Cost: ${(item.costBasis || 0).toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                      </td>
+                      <td className="p-3 text-center">{item.quantity || 1}</td>
+                      {activeTab === "exported" && (
+                        <>
+                          <td className="p-3 text-xs text-gray-600">
+                            {item.exportBatchId || "-"}
+                          </td>
+                          <td className="p-3 text-xs text-gray-600">
+                            {item.exportedAt
+                              ? new Date(
+                                  item.exportedAt.seconds * 1000,
+                                ).toLocaleDateString()
+                              : "-"}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

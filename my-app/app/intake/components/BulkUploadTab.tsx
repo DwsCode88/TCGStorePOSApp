@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/client";
 import {
   collection,
-  addDoc,
+  doc,
+  setDoc,
   serverTimestamp,
   getDocs,
 } from "firebase/firestore";
@@ -98,6 +99,7 @@ export default function BulkUploadTab() {
     const cards: BulkUploadCard[] = [];
 
     console.log(`📄 CSV has ${lines.length} lines`);
+    console.log(`📋 Header: ${lines[0]}`);
 
     for (let i = 1; i < lines.length; i++) {
       const fields: string[] = [];
@@ -117,15 +119,33 @@ export default function BulkUploadTab() {
       }
       fields.push(current.trim());
 
-      if (fields.length < 14) continue;
+      if (fields.length < 14) {
+        console.warn(`⚠️ Line ${i} has only ${fields.length} fields, skipping`);
+        continue;
+      }
 
       const cleanField = (field: string) => field.replace(/^"|"$/g, "").trim();
+
+      // TCGPlayer CSVs sometimes have "Product Name" at index 3 and "Title" at index 4
+      // Title is usually the full card name with number
+      const productName = cleanField(fields[3]);
+      const title = fields[4] ? cleanField(fields[4]) : "";
+      const cardName = title || productName || "Unknown Card";
+
+      if (i === 1) {
+        console.log(`🔍 First card parsing:`, {
+          fields3_ProductName: productName,
+          fields4_Title: title,
+          finalCardName: cardName,
+          totalFields: fields.length,
+        });
+      }
 
       cards.push({
         tcgplayerId: cleanField(fields[0]),
         productLine: cleanField(fields[1]),
         setName: cleanField(fields[2]),
-        productName: cleanField(fields[3]),
+        productName: cardName, // Use Title if available, fallback to Product Name
         number: cleanField(fields[5]),
         rarity: cleanField(fields[6]),
         condition: cleanField(fields[7]),
@@ -136,6 +156,13 @@ export default function BulkUploadTab() {
     }
 
     console.log(`✅ Parsed ${cards.length} cards`);
+    if (cards.length > 0) {
+      console.log(`📦 Sample card:`, {
+        name: cards[0].productName,
+        set: cards[0].setName,
+        number: cards[0].number,
+      });
+    }
     return cards;
   };
 
@@ -258,10 +285,25 @@ export default function BulkUploadTab() {
           acquisitionType: acquisitionType,
         });
 
+        // Validate card has a name
+        if (!card.productName || card.productName === "Unknown Card") {
+          console.warn(`⚠️ Card ${i + 1} has no name, skipping upload`);
+          updatedCards[i] = {
+            ...parsed,
+            status: "error",
+            error: "Card name is missing",
+          };
+          setProgress({ current: i + 1, total: parsedCards.length });
+          setParsedCards([...updatedCards]);
+          continue;
+        }
+
         const cardData = {
           // Card Info
-          name: card.productName,
-          set: card.setName,
+          cardName: card.productName, // ✅ Changed from 'name' to 'cardName'
+          name: card.productName, // Keep both for compatibility
+          setName: card.setName,
+          set: card.setName, // Keep both for compatibility
           number: card.number,
           rarity: card.rarity,
           game: card.productLine.toLowerCase(),
@@ -303,16 +345,22 @@ export default function BulkUploadTab() {
           source: "tcgplayer-csv-bulk-import",
         };
 
-        const docRef = await addDoc(collection(db, "inventory"), cardData);
+        const docRef = await setDoc(doc(db, "inventory", sku), cardData);
 
         updatedCards[i] = {
           ...parsed,
           status: "success",
-          firestoreId: docRef.id,
+          firestoreId: sku, // Document ID is the SKU
         };
 
         console.log(
-          `✅ [${i + 1}/${parsedCards.length}] ${card.productName} (SKU: ${sku}, ID: ${docRef.id})`,
+          `✅ [${i + 1}/${parsedCards.length}] Uploaded to Firebase:`,
+          {
+            id: sku, // Document ID is the SKU
+            cardName: cardData.cardName,
+            sku: cardData.sku,
+            vendorCode: cardData.vendorCode || "none",
+          },
         );
       } catch (error: any) {
         console.error(
