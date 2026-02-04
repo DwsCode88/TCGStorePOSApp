@@ -1,16 +1,14 @@
 // Inventory Item Type Definition
 
-// Game type for TCG games (matches actual usage in codebase)
+// Game type for TCG games (matches GAME_CODES in lib/firebase/inventory.ts)
 export type Game =
   | "pokemon"
   | "mtg"
-  | "yugioh"
   | "onepiece"
   | "lorcana"
   | "digimon"
   | "unionarena"
-  | "grandarchive"
-  | "flesh-and-blood";
+  | "grandarchive";
 
 export interface InventoryItem {
   // Core identification
