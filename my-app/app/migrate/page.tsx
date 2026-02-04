@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
+import { db } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
