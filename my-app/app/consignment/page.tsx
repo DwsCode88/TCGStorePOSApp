@@ -1,91 +1,91 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { useState, useEffect } from "react";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/client";
 
 export default function ConsignmentPage() {
   const [consignmentItems, setConsignmentItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Map<string, any>>(new Map());
   const [error, setError] = useState<string | null>(null);
-  
+
   useEffect(() => {
     const loadConsignments = async () => {
       try {
-        console.log('🔄 Loading customers...');
-        
+        console.log("🔄 Loading customers...");
+
         // Load all customers first
         let customerMap = new Map();
         try {
-          const customersSnapshot = await getDocs(collection(db, 'customers'));
-          customersSnapshot.docs.forEach(doc => {
+          const customersSnapshot = await getDocs(collection(db, "customers"));
+          customersSnapshot.docs.forEach((doc) => {
             customerMap.set(doc.id, { id: doc.id, ...doc.data() });
           });
-          console.log('✅ Loaded customers:', customerMap.size);
+          console.log("✅ Loaded customers:", customerMap.size);
           setCustomers(customerMap);
         } catch (customerError) {
-          console.warn('⚠️ Could not load customers (collection may not exist yet):', customerError);
+          console.warn(
+            "⚠️ Could not load customers (collection may not exist yet):",
+            customerError,
+          );
           // Continue without customers
         }
-        
-        console.log('🔄 Loading consignment items...');
-        
-        // Load consignment items
+
+        console.log("🔄 Loading consignment items...");
+
+        // Query for all consignment items
         const q = query(
-          collection(db, 'inventory'),
-          where('acquisitionType', '==', 'consignment')
+          collection(db, "inventory"),
+          where("acquisitionType", "==", "consignment"),
         );
-        const snapshot = await getDocs(q);
-        const items = snapshot.docs.map(doc => ({
+
+        const querySnapshot = await getDocs(q);
+        console.log("✅ Found consignment items:", querySnapshot.size);
+
+        const items = querySnapshot.docs.map((doc) => ({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
         }));
-        
-        console.log('✅ Loaded consignment items:', items.length);
+
         setConsignmentItems(items);
-      } catch (error: any) {
-        console.error('❌ Error loading consignments:', error);
-        setError(error.message || 'Failed to load consignments');
+      } catch (err: any) {
+        console.error("❌ Error loading consignments:", err);
+        setError(err.message);
       } finally {
-        console.log('🏁 Loading complete, stopping spinner');
         setLoading(false);
       }
     };
+
     loadConsignments();
   }, []);
 
-  const activeItems = consignmentItems.filter(i => !i.sold);
-  const soldItems = consignmentItems.filter(i => i.sold);
-  
-  const totalValue = activeItems.reduce((sum, item) => 
-    sum + (item.sellPrice || 0), 0
+  // Group items by customer
+  const itemsByCustomer = consignmentItems.reduce(
+    (acc, item) => {
+      const customerId = item.customerId || "unknown";
+      if (!acc[customerId]) {
+        acc[customerId] = [];
+      }
+      acc[customerId].push(item);
+      return acc;
+    },
+    {} as Record<string, any[]>,
   );
-  
-  const totalOwed = soldItems
-    .filter(i => !i.consignorPaid)
-    .reduce((sum, item) => 
-      sum + ((item.sellPrice || 0) * ((item.consignorPayoutPercent || 60) / 100)), 0
-    );
-
-  const getCustomerName = (customerId: string) => {
-    if (!customerId) return 'No Customer';
-    const customer = customers.get(customerId);
-    return customer ? customer.name : `Unknown (ID: ${customerId.substring(0, 8)})`;
-  };
-
-  const getCustomerContact = (customerId: string) => {
-    if (!customerId) return '';
-    const customer = customers.get(customerId);
-    return customer ? (customer.phone || customer.email || '') : '';
-  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="text-lg font-medium mb-2">Loading consignments...</div>
-          <div className="text-sm text-gray-500">Check console for details</div>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+          <div className="text-lg text-gray-600">Loading consignments...</div>
         </div>
       </div>
     );
@@ -93,166 +93,181 @@ export default function ConsignmentPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-red-900 mb-2">Error Loading Consignments</h2>
-            <p className="text-red-700 mb-4">{error}</p>
-            <div className="text-sm text-gray-700">
-              <p className="font-semibold mb-2">Possible fixes:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Check Firebase connection (console logs)</li>
-                <li>Make sure Firestore is enabled in Firebase Console</li>
-                <li>Check security rules allow read access</li>
-                <li>Verify .env.local has correct Firebase credentials</li>
-              </ul>
-            </div>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+          <div className="text-red-800 font-semibold mb-2">
+            Error Loading Consignments
           </div>
+          <div className="text-red-600 text-sm">{error}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold mb-8">🤝 Consignment Tracking</h1>
-        
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">
+            Consignment Management
+          </h1>
+          <p className="text-gray-600">
+            Track consignment inventory by customer
+          </p>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-6 mb-6">
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">Active Items</div>
-            <div className="text-3xl font-bold text-blue-600">{activeItems.length}</div>
+            <div className="text-3xl font-bold text-blue-600">
+              {consignmentItems.length}
+            </div>
+            <div className="text-sm text-gray-600">Total Items</div>
           </div>
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">Total Value</div>
-            <div className="text-3xl font-bold text-green-600">${totalValue.toFixed(2)}</div>
+            <div className="text-3xl font-bold text-green-600">
+              {Object.keys(itemsByCustomer).length}
+            </div>
+            <div className="text-sm text-gray-600">Customers</div>
           </div>
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">Sold Items</div>
-            <div className="text-3xl font-bold">{soldItems.length}</div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">Payment Owed</div>
-            <div className="text-3xl font-bold text-red-600">${totalOwed.toFixed(2)}</div>
+            <div className="text-3xl font-bold text-purple-600">
+              $
+              {consignmentItems
+                .reduce((sum, item) => sum + (item.sellPrice || 0), 0)
+                .toFixed(2)}
+            </div>
+            <div className="text-sm text-gray-600">Total Value</div>
           </div>
         </div>
 
-        {/* Active Consignments */}
-        <div className="bg-white rounded-lg shadow mb-8">
-          <div className="p-6 border-b">
-            <h2 className="text-2xl font-semibold">Active Consignments</h2>
-            <p className="text-sm text-gray-600 mt-1">Items currently in stock</p>
+        {/* Items by Customer */}
+        {consignmentItems.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-lg p-12 text-center">
+            <div className="text-6xl mb-4">📦</div>
+            <div className="text-xl font-semibold text-gray-800 mb-2">
+              No Consignment Items
+            </div>
+            <div className="text-gray-600">
+              Consignment items will appear here after you add them via bulk
+              upload.
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left p-4 font-semibold">Card</th>
-                  <th className="text-left p-4 font-semibold">Customer</th>
-                  <th className="text-left p-4 font-semibold">Contact</th>
-                  <th className="text-right p-4 font-semibold">Price</th>
-                  <th className="text-right p-4 font-semibold">Their Cut</th>
-                  <th className="text-right p-4 font-semibold">Shop Cut</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeItems.map(item => {
-                  const consignorCut = (item.sellPrice || 0) * ((item.consignorPayoutPercent || 60) / 100);
-                  const shopCut = (item.sellPrice || 0) - consignorCut;
-                  
-                  return (
-                    <tr key={item.id} className="border-t hover:bg-gray-50">
-                      <td className="p-4">
-                        <div className="font-semibold">{item.cardName || item.name}</div>
-                        <div className="text-sm text-gray-500">{item.setName}</div>
-                        <div className="text-xs text-gray-400">
-                          {item.condition} • #{item.number}
-                        </div>
-                      </td>
-                      <td className="p-4 font-medium">{getCustomerName(item.customerId)}</td>
-                      <td className="p-4 text-sm text-gray-600">{getCustomerContact(item.customerId)}</td>
-                      <td className="p-4 text-right font-semibold">
-                        ${(item.sellPrice || 0).toFixed(2)}
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="font-semibold text-purple-600">
-                          ${consignorCut.toFixed(2)}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          ({item.consignorPayoutPercent || 60}%)
-                        </div>
-                      </td>
-                      <td className="p-4 text-right font-semibold text-green-600">
-                        ${shopCut.toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {activeItems.length === 0 && (
-              <div className="p-12 text-center text-gray-500">
-                <div className="text-4xl mb-2">📭</div>
-                <div>No active consignments</div>
-                <div className="text-sm mt-1">Add consignment items from the intake page</div>
-              </div>
-            )}
-          </div>
-        </div>
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(itemsByCustomer).map(([customerId, items]) => {
+              const customer = customers.get(customerId);
+              const totalValue = items.reduce(
+                (sum, item) => sum + (item.sellPrice || 0),
+                0,
+              );
+              const payoutPercent = items[0]?.consignorPayoutPercent || 70;
+              const consignorPayout = totalValue * (payoutPercent / 100);
 
-        {/* Sold - Payment Owed */}
-        {soldItems.filter(i => !i.consignorPaid).length > 0 && (
-          <div className="bg-white rounded-lg shadow">
-            <div className="p-6 border-b bg-red-50">
-              <h2 className="text-2xl font-semibold text-red-900">
-                💰 Sold - Payment Owed
-              </h2>
-              <p className="text-sm text-red-700 mt-1">
-                Total owed: ${totalOwed.toFixed(2)}
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="text-left p-4 font-semibold">Card</th>
-                    <th className="text-left p-4 font-semibold">Customer</th>
-                    <th className="text-left p-4 font-semibold">Contact</th>
-                    <th className="text-right p-4 font-semibold">Sold For</th>
-                    <th className="text-right p-4 font-semibold">Owed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {soldItems.filter(i => !i.consignorPaid).map(item => {
-                    const owed = (item.sellPrice || 0) * ((item.consignorPayoutPercent || 60) / 100);
-                    
-                    return (
-                      <tr key={item.id} className="border-t hover:bg-gray-50">
-                        <td className="p-4">
-                          <div className="font-semibold">{item.cardName || item.name}</div>
-                          <div className="text-sm text-gray-500">{item.setName}</div>
-                        </td>
-                        <td className="p-4 font-semibold">{getCustomerName(item.customerId)}</td>
-                        <td className="p-4 text-sm">{getCustomerContact(item.customerId)}</td>
-                        <td className="p-4 text-right font-semibold">
-                          ${(item.sellPrice || 0).toFixed(2)}
-                        </td>
-                        <td className="p-4 text-right font-bold text-red-600 text-lg">
-                          ${owed.toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+              return (
+                <div
+                  key={customerId}
+                  className="bg-white rounded-lg shadow-lg overflow-hidden"
+                >
+                  {/* Customer Header */}
+                  <div className="bg-blue-600 text-white p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-2xl font-bold">
+                          {customer?.name || "Unknown Customer"}
+                        </h2>
+                        {customer?.email && (
+                          <div className="text-sm opacity-90 mt-1">
+                            {customer.email}
+                          </div>
+                        )}
+                        <div className="text-sm opacity-90 mt-1">
+                          Vendor Code: {items[0]?.vendorCode || "N/A"}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-3xl font-bold">{items.length}</div>
+                        <div className="text-sm opacity-90">Items</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Payout Info */}
+                  <div className="bg-green-50 border-b border-green-200 p-4">
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <div className="text-sm text-gray-600">Total Value</div>
+                        <div className="text-xl font-bold text-gray-800">
+                          ${totalValue.toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Payout Rate</div>
+                        <div className="text-xl font-bold text-blue-600">
+                          {payoutPercent}%
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">
+                          Consignor Payout
+                        </div>
+                        <div className="text-xl font-bold text-green-600">
+                          ${consignorPayout.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Items Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-100">
+                        <tr>
+                          <th className="text-left p-3">Card</th>
+                          <th className="text-left p-3">Set</th>
+                          <th className="text-left p-3">Condition</th>
+                          <th className="text-right p-3">Sell Price</th>
+                          <th className="text-right p-3">Payout</th>
+                          <th className="text-left p-3">SKU</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((item) => {
+                          const itemPayout =
+                            (item.sellPrice || 0) * (payoutPercent / 100);
+                          return (
+                            <tr
+                              key={item.id}
+                              className="border-b hover:bg-gray-50"
+                            >
+                              <td className="p-3 font-medium">
+                                {item.cardName || item.name}
+                              </td>
+                              <td className="p-3 text-gray-600">
+                                {item.setName || item.set}
+                              </td>
+                              <td className="p-3 text-gray-600">
+                                {item.condition}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-green-600">
+                                ${(item.sellPrice || 0).toFixed(2)}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-blue-600">
+                                ${itemPayout.toFixed(2)}
+                              </td>
+                              <td className="p-3 text-xs text-gray-500">
+                                {item.sku || item.id}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
