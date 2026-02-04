@@ -157,12 +157,14 @@ export default function ConsignmentPage() {
         ) : (
           <div className="space-y-6">
             {Object.entries(itemsByCustomer).map(([customerId, items]) => {
+              const customerItems = items as any[];
               const customer = customers.get(customerId);
-              const totalValue = items.reduce(
+              const totalValue = customerItems.reduce(
                 (sum, item) => sum + (item.sellPrice || 0),
                 0,
               );
-              const payoutPercent = items[0]?.consignorPayoutPercent || 70;
+              const payoutPercent =
+                customerItems[0]?.consignorPayoutPercent || 70;
               const consignorPayout = totalValue * (payoutPercent / 100);
 
               return (
@@ -183,11 +185,13 @@ export default function ConsignmentPage() {
                           </div>
                         )}
                         <div className="text-sm opacity-90 mt-1">
-                          Vendor Code: {items[0]?.vendorCode || "N/A"}
+                          Vendor Code: {customerItems[0]?.vendorCode || "N/A"}
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-3xl font-bold">{items.length}</div>
+                        <div className="text-3xl font-bold">
+                          {customerItems.length}
+                        </div>
                         <div className="text-sm opacity-90">Items</div>
                       </div>
                     </div>
@@ -233,7 +237,7 @@ export default function ConsignmentPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {items.map((item) => {
+                        {customerItems.map((item) => {
                           const itemPayout =
                             (item.sellPrice || 0) * (payoutPercent / 100);
                           return (
