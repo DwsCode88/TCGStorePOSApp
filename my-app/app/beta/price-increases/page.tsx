@@ -25,6 +25,26 @@ interface PriceIncrease {
   location: string;
 }
 
+interface InventoryItem {
+  id: string;
+  sku?: string;
+  cardName?: string;
+  name?: string;
+  setName?: string;
+  set?: string;
+  priceHistory?: Array<{
+    oldPrice: number;
+    newPrice: number;
+    changeAmount: number;
+    changePercent: number;
+    updatedAt: string;
+  }>;
+  relabeled?: boolean;
+  displayLocation?: string;
+  location?: string;
+  [key: string]: any;
+}
+
 export default function PriceIncreaseDashboard() {
   const [increases, setIncreases] = useState<PriceIncrease[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +60,10 @@ export default function PriceIncreaseDashboard() {
   const loadPriceIncreases = async () => {
     try {
       const snapshot = await getDocs(collection(db, "inventory"));
-      const items = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const items: InventoryItem[] = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
       // Filter items with price history showing increases
       const withIncreases = items
