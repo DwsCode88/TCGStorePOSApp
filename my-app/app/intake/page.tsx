@@ -1383,11 +1383,6 @@ export default function IntakePage() {
                     const newType = e.target.value;
                     form.setValue("acquisitionType", newType as any);
 
-                    if (newType !== "consignment") {
-                      form.setValue("consignorName", "");
-                      form.setValue("consignorContact", "");
-                    }
-
                     if (newType === "consignment") {
                       setCostBasis(0);
                     } else {
