@@ -656,7 +656,7 @@ export default function LabelsPage() {
                   if (hasDuplicates) {
                     const nameCount: Record<string, number> = {};
                     selectedCardNames.forEach((name) => {
-                      nameCount[name] = (nameCount[name] || 0) + 1;
+                      if (name) nameCount[name] = (nameCount[name] || 0) + 1;
                     });
                     const duplicates = Object.entries(nameCount).filter(
                       ([_, count]) => count > 1,
