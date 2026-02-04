@@ -284,7 +284,7 @@ export default function IntakePage() {
 
   const updatePricing = async (
     market: number,
-    acqType: "buy" | "trade" | "pull",
+    acqType: "buy" | "trade" | "pull" | "consignment",
     cond: string,
   ) => {
     try {
@@ -309,7 +309,12 @@ export default function IntakePage() {
           localCost = market * (expectedBuyPercent / 100);
         } else if (acqType === "trade") {
           localCost = market * ((expectedBuyPercent + 5) / 100);
+        } else if (acqType === "consignment") {
+          // For consignment, cost is the payout to consignor
+          const payoutPercent = form.getValues("consignorPayoutPercent") || 70;
+          localCost = market * 1.3 * (payoutPercent / 100); // market price * markup * payout %
         }
+        // Pull has 0 cost
 
         const localSell = localCost * (1 + sellMarkupPercent / 100);
         const localProfit = localSell - localCost;
@@ -338,6 +343,12 @@ export default function IntakePage() {
         fallbackCost = market * (buyPercent / 100);
       } else if (acqType === "trade") {
         fallbackCost = market * ((buyPercent + 5) / 100);
+      } else if (acqType === "consignment") {
+        // For consignment, cost is the payout to consignor
+        const payoutPercent = form.getValues("consignorPayoutPercent") || 70;
+        fallbackCost = market * 1.3 * (payoutPercent / 100);
+      }
+      // Pull has 0 cost
       }
 
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
