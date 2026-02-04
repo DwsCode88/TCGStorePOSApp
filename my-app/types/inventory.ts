@@ -8,6 +8,8 @@ export type Game =
   | "onepiece"
   | "lorcana"
   | "digimon"
+  | "unionarena"
+  | "grandarchive"
   | "flesh-and-blood";
 
 export interface InventoryItem {
