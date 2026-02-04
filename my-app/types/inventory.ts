@@ -1,5 +1,14 @@
 // Inventory Item Type Definition
 
+// Game type for TCG games
+export type Game =
+  | "pokemon"
+  | "magic"
+  | "yugioh"
+  | "onepiece"
+  | "lorcana"
+  | "flesh-and-blood";
+
 export interface InventoryItem {
   // Core identification
   sku: string;
