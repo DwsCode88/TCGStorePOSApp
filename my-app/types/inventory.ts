@@ -1,12 +1,13 @@
 // Inventory Item Type Definition
 
-// Game type for TCG games
+// Game type for TCG games (matches actual usage in codebase)
 export type Game =
   | "pokemon"
-  | "magic"
+  | "mtg"
   | "yugioh"
   | "onepiece"
   | "lorcana"
+  | "digimon"
   | "flesh-and-blood";
 
 export interface InventoryItem {
