@@ -29,11 +29,20 @@ export function generateLabels(
   items: InventoryItem[],
   options: LabelOptions = {},
 ): jsPDF {
-  const { width, height, fontSize, padding } = {
-    ...defaultOptions,
-    ...options,
-    fontSize: { ...defaultOptions.fontSize, ...options.fontSize },
+  const opts = {
+    width: options.width || defaultOptions.width,
+    height: options.height || defaultOptions.height,
+    padding: options.padding || defaultOptions.padding,
+    fontSize: {
+      storeName:
+        options.fontSize?.storeName || defaultOptions.fontSize.storeName,
+      cardName: options.fontSize?.cardName || defaultOptions.fontSize.cardName,
+      setInfo: options.fontSize?.setInfo || defaultOptions.fontSize.setInfo,
+      price: options.fontSize?.price || defaultOptions.fontSize.price,
+    },
   };
+
+  const { width, height, fontSize, padding } = opts;
 
   const pdf = new jsPDF({
     orientation: "portrait",
