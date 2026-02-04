@@ -349,7 +349,6 @@ export default function IntakePage() {
         fallbackCost = market * 1.3 * (payoutPercent / 100);
       }
       // Pull has 0 cost
-      }
 
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
       const fallbackProfit = fallbackSell - fallbackCost;
@@ -686,6 +685,11 @@ export default function IntakePage() {
     }
   };
 
+  // Calculate session stats
+  const acceptedCards = sessionCards.filter((c) => c.accepted);
+  const declinedCards = sessionCards.filter((c) => !c.accepted);
+  const totalPayout = acceptedCards.reduce((sum, c) => sum + c.buyPrice, 0);
+
   if (!apiProvider) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -695,10 +699,6 @@ export default function IntakePage() {
       </div>
     );
   }
-
-  const acceptedCards = sessionCards.filter((c) => c.accepted);
-  const declinedCards = sessionCards.filter((c) => !c.accepted);
-  const totalPayout = acceptedCards.reduce((sum, c) => sum + c.buyPrice, 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
