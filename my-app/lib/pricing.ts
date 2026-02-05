@@ -80,6 +80,34 @@ export function calculateCostBasis(
   }
 }
 
+// Interface for pricing breakdown
+export interface PricingBreakdown {
+  costBasis: number;
+  sellPrice: number;
+  profit: number;
+  margin: number;
+}
+
+// Get complete pricing breakdown
+export function getPricingBreakdown(
+  marketPrice: number,
+  acquisitionType: "buy" | "trade" | "pull" | "consignment",
+  condition: string = "NM",
+  markup: number = 30,
+): PricingBreakdown {
+  const costBasis = calculateCostBasis(marketPrice, acquisitionType, condition);
+  const sellPrice = calculateSellPriceSync(marketPrice, condition, markup);
+  const profit = sellPrice - costBasis;
+  const margin = sellPrice > 0 ? (profit / sellPrice) * 100 : 0;
+
+  return {
+    costBasis,
+    sellPrice,
+    profit,
+    margin,
+  };
+}
+
 // Synchronous version for bulk upload (doesn't fetch Firestore rules)
 export function calculateSellPriceSync(
   marketPrice: number,
