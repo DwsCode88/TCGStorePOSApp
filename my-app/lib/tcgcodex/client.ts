@@ -189,10 +189,7 @@ export async function getCardById(cardId: string) {
       if (firstPrice) {
         const eurPrice = firstPrice.attributes.price;
         const usdPrice = convertToUSD(eurPrice);
-
         normalized.variants[0].price = usdPrice;
-        normalized.variants[0].originalPrice = eurPrice;
-        normalized.variants[0].originalCurrency = "EUR";
       }
     }
 
