@@ -1,152 +1,149 @@
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "./firebase/client";
-import {
-  Condition,
-  PricingRule,
-  BinParams,
-  RoundingParams,
-  MarkupParams,
-} from "@/types/inventory";
+// Inventory Item Type Definition
 
-export async function calculateSellPrice(
-  marketPrice: number,
-  condition: Condition,
-): Promise<number> {
-  if (!marketPrice || marketPrice <= 0) return 0;
+// Game type for TCG games (matches GAME_CODES in lib/firebase/inventory.ts)
+export type Game =
+  | "pokemon"
+  | "mtg"
+  | "onepiece"
+  | "lorcana"
+  | "digimon"
+  | "unionarena"
+  | "grandarchive";
 
-  const rules = await getPricingRules();
-  const rule = rules.find(
-    (r) =>
-      r.condition === condition &&
-      marketPrice >= r.priceRange.min &&
-      marketPrice < r.priceRange.max &&
-      r.enabled,
-  );
+// Condition type for card conditions
+export type Condition =
+  | "NM"
+  | "LP"
+  | "MP"
+  | "HP"
+  | "DMG"
+  | "Near Mint"
+  | "Lightly Played"
+  | "Moderately Played"
+  | "Heavily Played"
+  | "Damaged";
 
-  if (!rule) return roundToNearest(marketPrice, 0.5);
+// Pricing strategy types
+export type PricingStrategy = "bin" | "round" | "markup";
 
-  switch (rule.strategy) {
-    case "bin":
-      return applyBinPricing(marketPrice, rule.params as BinParams);
-    case "round":
-      return applyRounding(marketPrice, rule.params as RoundingParams);
-    case "markup":
-      return applyMarkup(marketPrice, rule.params as MarkupParams);
-    default:
-      return marketPrice;
-  }
+// Price binning parameters
+export interface BinParams {
+  bins: number[];
 }
 
-function applyBinPricing(price: number, params: BinParams): number {
-  return params.bins.reduce((prev, curr) =>
-    Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev,
-  );
+// Rounding parameters
+export interface RoundingParams {
+  roundTo: number;
+  direction?: "up" | "down" | "nearest";
 }
 
-function applyRounding(price: number, params: RoundingParams): number {
-  const { roundTo, direction = "nearest" } = params;
-
-  switch (direction) {
-    case "up":
-      return Math.ceil(price / roundTo) * roundTo;
-    case "down":
-      return Math.floor(price / roundTo) * roundTo;
-    case "nearest":
-    default:
-      return Math.round(price / roundTo) * roundTo;
-  }
+// Markup parameters
+export interface MarkupParams {
+  percentage: number;
+  minProfit?: number;
 }
 
-function applyMarkup(price: number, params: MarkupParams): number {
-  const markup = price * (params.percentage / 100);
-  const sellPrice = price + Math.max(markup, params.minProfit || 0);
-  return roundToNearest(sellPrice, 0.25);
+// Pricing rule configuration
+export interface PricingRule {
+  condition: Condition;
+  priceRange: {
+    min: number;
+    max: number;
+  };
+  strategy: PricingStrategy;
+  params: BinParams | RoundingParams | MarkupParams;
+  enabled: boolean;
 }
 
-function roundToNearest(value: number, increment: number): number {
-  return Math.round(value / increment) * increment;
-}
+export interface InventoryItem {
+  // Core identification
+  sku: string;
+  id?: string;
 
-async function getPricingRules(): Promise<PricingRule[]> {
-  try {
-    const rulesDoc = await getDoc(doc(db, "pricingRules", "default"));
-    if (rulesDoc.exists()) {
-      const data = rulesDoc.data();
-      return (data?.rules as PricingRule[]) || DEFAULT_RULES;
-    }
-  } catch (error) {
-    console.error("Error fetching pricing rules:", error);
-  }
-  return DEFAULT_RULES;
-}
+  // Card information
+  cardName?: string;
+  name?: string;
+  setName?: string;
+  set?: string;
+  number?: string;
+  rarity?: string;
+  game?: string;
 
-export const DEFAULT_RULES: PricingRule[] = [
-  {
-    condition: "NM",
-    priceRange: { min: 0, max: 5 },
-    strategy: "bin",
-    params: { bins: [0.25, 0.5, 1, 2, 3, 4, 5] },
-    enabled: true,
-  },
-  {
-    condition: "NM",
-    priceRange: { min: 5, max: 20 },
-    strategy: "round",
-    params: { roundTo: 0.5, direction: "nearest" },
-    enabled: true,
-  },
-  {
-    condition: "NM",
-    priceRange: { min: 20, max: 100 },
-    strategy: "round",
-    params: { roundTo: 1.0, direction: "nearest" },
-    enabled: true,
-  },
-  {
-    condition: "NM",
-    priceRange: { min: 100, max: Infinity },
-    strategy: "round",
-    params: { roundTo: 5.0, direction: "up" },
-    enabled: true,
-  },
-  {
-    condition: "LP",
-    priceRange: { min: 0, max: Infinity },
-    strategy: "markup",
-    params: { percentage: -10 },
-    enabled: true,
-  },
-  {
-    condition: "MP",
-    priceRange: { min: 0, max: Infinity },
-    strategy: "markup",
-    params: { percentage: -20 },
-    enabled: true,
-  },
-  {
-    condition: "HP",
-    priceRange: { min: 0, max: Infinity },
-    strategy: "markup",
-    params: { percentage: -35 },
-    enabled: true,
-  },
-  {
-    condition: "DMG",
-    priceRange: { min: 0, max: Infinity },
-    strategy: "markup",
-    params: { percentage: -50 },
-    enabled: true,
-  },
-];
+  // Condition and printing
+  condition?: string;
+  printing?: string;
+  language?: string;
 
-export async function lockSellPrice(sku: string): Promise<void> {
-  try {
-    await updateDoc(doc(db, "inventory", sku), {
-      sellPriceLockedAt: new Date(),
-      status: "labeled",
-    });
-  } catch (error) {
-    console.error("Error locking sell price:", error);
-    throw error;
-  }
+  // Pricing
+  marketPrice?: number;
+  sellPrice?: number;
+  costBasis?: number;
+  profit?: number;
+
+  // Inventory management
+  quantity?: number;
+  location?: string;
+  displayLocation?: string;
+  shelfNumber?: string;
+  binderInfo?: string;
+
+  // Acquisition
+  acquisitionType?: "buy" | "trade" | "pull" | "consignment";
+  acquisitionDate?: string;
+  vendorCode?: string;
+  customerVendorCode?: string;
+
+  // Consignment specific
+  customerId?: string;
+  consignorPayoutPercent?: number;
+
+  // Export tracking
+  exportedAt?: any; // Firebase Timestamp or null
+  exportBatchId?: string;
+  lastExportDate?: string;
+
+  // QR and customer interaction
+  scanCount?: number;
+  interestedCount?: number;
+  lastScanned?: any;
+  scans?: Array<{
+    timestamp: any;
+    userAgent?: string;
+  }>;
+  customerInterest?: Array<{
+    timestamp: any;
+    interested: boolean;
+  }>;
+
+  // Price history
+  priceHistory?: Array<{
+    oldPrice: number;
+    newPrice: number;
+    changeAmount: number;
+    changePercent: number;
+    updatedAt: string;
+    source?: string;
+  }>;
+  lastPriceUpdate?: any;
+  priceSource?: string;
+
+  // Relabeling
+  relabeled?: boolean;
+  relabeledAt?: any;
+
+  // Images
+  imageUrl?: string;
+
+  // Additional fields
+  notes?: string;
+  tcgplayerId?: string;
+  cardtrader_id?: number;
+  blueprint_id?: number;
+
+  // Timestamps
+  createdAt?: any;
+  updatedAt?: any;
+
+  // Catch-all for any other fields
+  [key: string]: any;
 }
