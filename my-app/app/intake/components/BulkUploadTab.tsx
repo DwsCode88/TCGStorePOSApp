@@ -249,10 +249,10 @@ export default function BulkUploadTab() {
             acquisitionType,
             card.condition,
           );
-          sellPrice = calculateSellPrice(costBasis);
+          sellPrice = calculateSellPriceSync(marketPrice, card.condition);
         } else if (acquisitionType === "trade") {
           costBasis = 0;
-          sellPrice = calculateSellPrice(marketPrice);
+          sellPrice = calculateSellPriceSync(marketPrice, card.condition);
         } else if (acquisitionType === "consignment") {
           costBasis = 0;
           sellPrice = marketPrice * 1.3;
@@ -420,11 +420,7 @@ export default function BulkUploadTab() {
     const sellPrice =
       acquisitionType === "consignment"
         ? marketPrice * 1.3
-        : calculateSellPrice(
-            acquisitionType === "buy"
-              ? calculateCostBasis(marketPrice, "buy", p.card.condition)
-              : marketPrice,
-          );
+        : calculateSellPriceSync(marketPrice, p.card.condition);
     return sum + sellPrice * p.card.quantity;
   }, 0);
 
@@ -689,9 +685,7 @@ export default function BulkUploadTab() {
                   const sellPrice =
                     acquisitionType === "consignment"
                       ? marketPrice * 1.3
-                      : calculateSellPrice(
-                          acquisitionType === "buy" ? costBasis : marketPrice,
-                        );
+                      : calculateSellPriceSync(marketPrice, card.condition);
 
                   return (
                     <tr
