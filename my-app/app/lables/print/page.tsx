@@ -33,6 +33,9 @@ interface InventoryItem {
   number?: string;
 }
 
+
+export const dynamic = 'force-dynamic';
+
 export default function LabelsPage() {
   const [needToPrint, setNeedToPrint] = useState<InventoryItem[]>([]);
   const [previouslyPrinted, setPreviouslyPrinted] = useState<InventoryItem[]>(
