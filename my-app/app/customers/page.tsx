@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import {
+
+export const dynamic = 'force-dynamic';
+
   collection,
   getDocs,
   doc,

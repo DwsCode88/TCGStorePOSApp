@@ -4,9 +4,6 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { db } from "@/lib/firebase/client";
 import {
-
-export const dynamic = 'force-dynamic';
-
   doc,
   getDoc,
   updateDoc,

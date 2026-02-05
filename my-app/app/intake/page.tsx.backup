@@ -6,9 +6,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import {
-
-export const dynamic = 'force-dynamic';
-
   searchCards,
   setAPIProvider,
   getAvailableProviders,

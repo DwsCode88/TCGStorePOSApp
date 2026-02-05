@@ -4,9 +4,6 @@ import { useState } from "react";
 import { db } from "@/lib/firebase/client";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-export const dynamic = 'force-dynamic';
-
-
 interface ConsignmentCard {
   tcgplayerId: string;
   productLine: string;

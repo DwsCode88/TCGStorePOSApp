@@ -2,9 +2,6 @@
 
 import { useState, useEffect } from "react";
 import {
-
-export const dynamic = 'force-dynamic';
-
   collection,
   getDocs,
   doc,
@@ -18,7 +15,6 @@ import { toast } from "sonner";
 
 interface InventoryItem {
   id: string;
-  sku?: string;
   cardName: string;
   setName: string;
   condition: string;
@@ -74,32 +70,12 @@ export default function LabelsPage() {
         ...doc.data(),
       })) as InventoryItem[];
 
-      console.log("📦 Loaded items:", allItems.length);
-      console.log("🔍 Sample item:", allItems[0]);
-
       const needPrint = allItems.filter((item) => !item.labelPrinted);
       const printed = allItems
         .filter((item) => item.labelPrinted)
         .sort((a, b) =>
           (b.labelPrintedAt || "").localeCompare(a.labelPrintedAt || ""),
         );
-
-      console.log("📋 Need to print:", needPrint.length);
-      console.log("✅ Already printed:", printed.length);
-
-      // Log consignment items specifically
-      const consignments = allItems.filter(
-        (item) => item.acquisitionType === "consignment",
-      );
-      console.log("🤝 Consignment items:", consignments.length);
-      if (consignments.length > 0) {
-        console.log("🔍 Sample consignment:", {
-          id: consignments[0].id,
-          sku: consignments[0].sku,
-          acquisitionType: consignments[0].acquisitionType,
-          customerVendorCode: consignments[0].customerVendorCode,
-        });
-      }
 
       setNeedToPrint(needPrint);
       setPreviouslyPrinted(printed);
@@ -112,29 +88,12 @@ export default function LabelsPage() {
   };
 
   const generateBarcodeValue = (item: InventoryItem) => {
-    let barcode = "";
-
-    // Priority 1: If item has a custom SKU field, use it
-    if (item.sku) {
-      barcode = item.sku;
-      console.log(`🏷️ Using SKU field for ${item.cardName}:`, barcode);
-      return barcode;
+    // For consignment items, use customer's vendor code
+    if (item.acquisitionType === "consignment" && item.customerVendorCode) {
+      return `${item.customerVendorCode}-${item.id}`;
     }
-
-    // Priority 2: For consignment items, the document ID itself is the custom SKU
-    if (item.acquisitionType === "consignment") {
-      barcode = item.id; // Document ID is the custom SKU for consignments
-      console.log(
-        `🤝 Consignment - using document ID as barcode for ${item.cardName}:`,
-        barcode,
-      );
-      return barcode;
-    }
-
-    // Priority 3: For non-consignment, use store vendor code + ID
-    barcode = vendorCode ? `${vendorCode}-${item.id}` : item.id;
-    console.log(`🏪 Store barcode for ${item.cardName}:`, barcode);
-    return barcode;
+    // For non-consignment or consignment without customer code, use store vendor code
+    return vendorCode ? `${vendorCode}-${item.id}` : item.id;
   };
 
   const markAsPrinted = async (itemIds: string[]) => {

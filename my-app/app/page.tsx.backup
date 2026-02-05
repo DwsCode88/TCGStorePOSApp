@@ -7,9 +7,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { InventoryItem } from "@/types/inventory";
 import {
-
-export const dynamic = 'force-dynamic';
-
   Package,
   Upload,
   CheckCircle,

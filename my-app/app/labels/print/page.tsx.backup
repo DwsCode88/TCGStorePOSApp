@@ -10,9 +10,6 @@ import { Printer, CheckSquare, Square } from "lucide-react";
 import { jsPDF } from "jspdf";
 import bwipjs from "bwip-js";
 
-export const dynamic = 'force-dynamic';
-
-
 export default function LabelsPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
