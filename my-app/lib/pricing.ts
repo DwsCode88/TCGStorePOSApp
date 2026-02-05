@@ -37,6 +37,49 @@ export async function calculateSellPrice(
   }
 }
 
+// Condition-based buy percentages
+const CONDITION_BUY_PERCENTS: Record<string, number> = {
+  NM: 65,
+  "NEAR MINT": 65,
+  LP: 55,
+  "LIGHTLY PLAYED": 55,
+  MP: 45,
+  "MODERATELY PLAYED": 45,
+  HP: 30,
+  "HEAVILY PLAYED": 30,
+  DMG: 20,
+  DAMAGED: 20,
+  GRADED: 70,
+};
+
+export function calculateCostBasis(
+  marketPrice: number,
+  acquisitionType: "buy" | "trade" | "pull" | "consignment",
+  condition: string = "NM",
+): number {
+  if (!marketPrice || marketPrice <= 0) return 0;
+
+  const normalizedCondition = condition.toUpperCase().trim();
+  const buyPercent =
+    CONDITION_BUY_PERCENTS[normalizedCondition] || CONDITION_BUY_PERCENTS["NM"];
+
+  switch (acquisitionType) {
+    case "buy":
+      return marketPrice * (buyPercent / 100);
+    case "trade":
+      // Trade gives 5% more than cash
+      return marketPrice * ((buyPercent + 5) / 100);
+    case "pull":
+      // Pulls have no cost
+      return 0;
+    case "consignment":
+      // Consignment cost is handled separately by payout percent
+      return 0;
+    default:
+      return marketPrice * (buyPercent / 100);
+  }
+}
+
 function applyBinPricing(price: number, params: BinParams): number {
   return params.bins.reduce((prev, curr) =>
     Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev,
