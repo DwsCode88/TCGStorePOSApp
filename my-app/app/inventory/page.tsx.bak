@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import {
 
-export const dynamic = 'force-dynamic';
 
   collection,
   getDocs,
@@ -24,6 +23,13 @@ import {
   X,
   Save,
 } from "lucide-react";
+
+
+
+
+
+
+export const dynamic = 'force-dynamic';
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);

@@ -34,8 +34,6 @@ interface InventoryItem {
 
 
 
-
-
 export const dynamic = 'force-dynamic';
 
 export default function LabelsPage() {
