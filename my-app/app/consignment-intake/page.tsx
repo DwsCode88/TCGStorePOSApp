@@ -24,11 +24,6 @@ interface ParsedCard {
   inventoryData: any;
 }
 
-
-
-
-
-
 export const dynamic = 'force-dynamic';
 
 export default function BulkConsignmentIntake() {

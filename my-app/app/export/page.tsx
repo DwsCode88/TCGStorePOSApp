@@ -33,11 +33,6 @@ interface InventoryItem {
   [key: string]: any;
 }
 
-
-
-
-
-
 export const dynamic = 'force-dynamic';
 
 export default function ExportPage() {
