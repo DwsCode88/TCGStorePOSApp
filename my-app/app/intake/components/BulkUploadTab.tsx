@@ -9,7 +9,7 @@ import {
   serverTimestamp,
   getDocs,
 } from "firebase/firestore";
-import { calculateCostBasis, calculateSellPrice } from "@/lib/pricing";
+import { calculateCostBasis, calculateSellPriceSync } from "@/lib/pricing";
 
 interface Customer {
   id: string;
