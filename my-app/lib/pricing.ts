@@ -1,236 +1,152 @@
-// lib/pricing.ts - FIXED with condition-based pricing
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { db } from "./firebase/client";
+import {
+  Condition,
+  PricingRule,
+  BinParams,
+  RoundingParams,
+  MarkupParams,
+} from "@/types/inventory";
 
-import { db } from './firebase/config';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-
-interface PricingBreakdown {
-  marketPrice: number;
-  costBasis: number;
-  sellPrice: number;
-  profit: number;
-  profitPercentage: number;
-  acquisitionType: string;
-  condition: string;
-}
-
-// Default condition multipliers for buy price
-const DEFAULT_CONDITION_MULTIPLIERS: Record<string, number> = {
-  'NM': 0.70,  // 70% for Near Mint
-  'LP': 0.65,  // 65% for Lightly Played
-  'MP': 0.55,  // 55% for Moderately Played
-  'HP': 0.45,  // 45% for Heavily Played
-  'DMG': 0.35, // 35% for Damaged
-};
-
-// Default sell markup
-const DEFAULT_SELL_MARKUP = 0.40; // 40% markup
-
-/**
- * Get pricing breakdown with condition-based calculations
- * NOW PROPERLY USES CONDITION PARAMETER!
- */
-export async function getPricingBreakdown(
+export async function calculateSellPrice(
   marketPrice: number,
-  acquisitionType: 'buy' | 'trade' | 'pull' | 'consignment',
-  condition: string
-): Promise<PricingBreakdown> {
+  condition: Condition,
+): Promise<number> {
+  if (!marketPrice || marketPrice <= 0) return 0;
+
+  const rules = await getPricingRules();
+  const rule = rules.find(
+    (r) =>
+      r.condition === condition &&
+      marketPrice >= r.priceRange.min &&
+      marketPrice < r.priceRange.max &&
+      r.enabled,
+  );
+
+  if (!rule) return roundToNearest(marketPrice, 0.5);
+
+  switch (rule.strategy) {
+    case "bin":
+      return applyBinPricing(marketPrice, rule.params as BinParams);
+    case "round":
+      return applyRounding(marketPrice, rule.params as RoundingParams);
+    case "markup":
+      return applyMarkup(marketPrice, rule.params as MarkupParams);
+    default:
+      return marketPrice;
+  }
+}
+
+function applyBinPricing(price: number, params: BinParams): number {
+  return params.bins.reduce((prev, curr) =>
+    Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev,
+  );
+}
+
+function applyRounding(price: number, params: RoundingParams): number {
+  const { roundTo, direction = "nearest" } = params;
+
+  switch (direction) {
+    case "up":
+      return Math.ceil(price / roundTo) * roundTo;
+    case "down":
+      return Math.floor(price / roundTo) * roundTo;
+    case "nearest":
+    default:
+      return Math.round(price / roundTo) * roundTo;
+  }
+}
+
+function applyMarkup(price: number, params: MarkupParams): number {
+  const markup = price * (params.percentage / 100);
+  const sellPrice = price + Math.max(markup, params.minProfit || 0);
+  return roundToNearest(sellPrice, 0.25);
+}
+
+function roundToNearest(value: number, increment: number): number {
+  return Math.round(value / increment) * increment;
+}
+
+async function getPricingRules(): Promise<PricingRule[]> {
   try {
-    console.log('🔥 Firebase getPricingBreakdown called:', { marketPrice, acquisitionType, condition });
-    
-    // Load settings from localStorage (same as frontend)
-    let conditionMultipliers = { ...DEFAULT_CONDITION_MULTIPLIERS };
-    let sellMarkup = DEFAULT_SELL_MARKUP;
-    
-    // Try to load from localStorage if available (browser environment)
-    if (typeof window !== 'undefined') {
-      const savedBuyPercents = localStorage.getItem('conditionBuyPercents');
-      const savedMarkup = localStorage.getItem('sellMarkupPercent');
-      
-      if (savedBuyPercents) {
-        const percents = JSON.parse(savedBuyPercents);
-        // Convert percentages to decimals
-        conditionMultipliers = {
-          NM: percents.NM / 100,
-          LP: percents.LP / 100,
-          MP: percents.MP / 100,
-          HP: percents.HP / 100,
-          DMG: percents.DMG / 100,
-        };
-        console.log('✅ Loaded multipliers from localStorage:', conditionMultipliers);
-      }
-      
-      if (savedMarkup) {
-        sellMarkup = parseFloat(savedMarkup) / 100; // Convert 40 to 0.40
-        console.log('✅ Loaded markup from localStorage:', sellMarkup);
-      }
+    const rulesDoc = await getDoc(doc(db, "pricingRules", "default"));
+    if (rulesDoc.exists()) {
+      const data = rulesDoc.data();
+      return (data?.rules as PricingRule[]) || DEFAULT_RULES;
     }
-    
-    // Get multiplier for THIS condition (not always NM!)
-    const normalizedCondition = condition.toUpperCase().trim();
-    const condMultiplier = conditionMultipliers[normalizedCondition] || conditionMultipliers['NM'];
-    
-    console.log('🔍 Condition multiplier lookup:', {
-      condition: normalizedCondition,
-      multiplier: condMultiplier,
-      availableMultipliers: conditionMultipliers
+  } catch (error) {
+    console.error("Error fetching pricing rules:", error);
+  }
+  return DEFAULT_RULES;
+}
+
+export const DEFAULT_RULES: PricingRule[] = [
+  {
+    condition: "NM",
+    priceRange: { min: 0, max: 5 },
+    strategy: "bin",
+    params: { bins: [0.25, 0.5, 1, 2, 3, 4, 5] },
+    enabled: true,
+  },
+  {
+    condition: "NM",
+    priceRange: { min: 5, max: 20 },
+    strategy: "round",
+    params: { roundTo: 0.5, direction: "nearest" },
+    enabled: true,
+  },
+  {
+    condition: "NM",
+    priceRange: { min: 20, max: 100 },
+    strategy: "round",
+    params: { roundTo: 1.0, direction: "nearest" },
+    enabled: true,
+  },
+  {
+    condition: "NM",
+    priceRange: { min: 100, max: Infinity },
+    strategy: "round",
+    params: { roundTo: 5.0, direction: "up" },
+    enabled: true,
+  },
+  {
+    condition: "LP",
+    priceRange: { min: 0, max: Infinity },
+    strategy: "markup",
+    params: { percentage: -10 },
+    enabled: true,
+  },
+  {
+    condition: "MP",
+    priceRange: { min: 0, max: Infinity },
+    strategy: "markup",
+    params: { percentage: -20 },
+    enabled: true,
+  },
+  {
+    condition: "HP",
+    priceRange: { min: 0, max: Infinity },
+    strategy: "markup",
+    params: { percentage: -35 },
+    enabled: true,
+  },
+  {
+    condition: "DMG",
+    priceRange: { min: 0, max: Infinity },
+    strategy: "markup",
+    params: { percentage: -50 },
+    enabled: true,
+  },
+];
+
+export async function lockSellPrice(sku: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, "inventory", sku), {
+      sellPriceLockedAt: new Date(),
+      status: "labeled",
     });
-    
-    // Calculate cost basis BASED ON CONDITION
-    let costBasis = 0;
-    if (acquisitionType === 'buy') {
-      costBasis = marketPrice * condMultiplier;
-      console.log(`💵 Buy calculation: ${marketPrice} × ${condMultiplier} = ${costBasis}`);
-    } else if (acquisitionType === 'trade') {
-      costBasis = marketPrice * (condMultiplier + 0.05); // Trade is 5% more
-    } else if (acquisitionType === 'consignment') {
-      costBasis = 0; // No upfront cost for consignment
-    }
-    // pull = 0 cost
-    
-    // Calculate sell price
-    const sellPrice = costBasis * (1 + sellMarkup);
-    
-    // Calculate profit
-    const profit = sellPrice - costBasis;
-    const profitPercentage = costBasis > 0 ? (profit / costBasis) * 100 : 0;
-    
-    console.log('💰 Firebase final calculation:', {
-      marketPrice,
-      condition: normalizedCondition,
-      multiplier: condMultiplier,
-      costBasis,
-      sellMarkup,
-      sellPrice,
-      profit,
-      profitPercentage
-    });
-    
-    return {
-      marketPrice,
-      costBasis,
-      sellPrice,
-      profit,
-      profitPercentage,
-      acquisitionType,
-      condition: normalizedCondition
-    };
   } catch (error) {
-    console.error('❌ Error in getPricingBreakdown:', error);
-    throw error;
-  }
-}
-
-/**
- * Calculate cost basis only
- */
-export function calculateCostBasis(
-  marketPrice: number,
-  acquisitionType: 'buy' | 'trade' | 'pull' | 'consignment',
-  condition: string
-): number {
-  const normalizedCondition = condition.toUpperCase().trim();
-  const condMultiplier = DEFAULT_CONDITION_MULTIPLIERS[normalizedCondition] || DEFAULT_CONDITION_MULTIPLIERS['NM'];
-  
-  if (acquisitionType === 'buy') {
-    return marketPrice * condMultiplier;
-  } else if (acquisitionType === 'trade') {
-    return marketPrice * (condMultiplier + 0.05);
-  } else if (acquisitionType === 'consignment') {
-    return 0; // No upfront cost
-  }
-  return 0; // pull or unknown
-}
-
-/**
- * Calculate sell price
- */
-export function calculateSellPrice(costBasis: number): number {
-  return costBasis * (1 + DEFAULT_SELL_MARKUP);
-}
-
-/**
- * Get pricing settings from localStorage or Firebase
- */
-export async function getPricingSettings(): Promise<{
-  conditionMultipliers: Record<string, number>;
-  sellMarkup: number;
-}> {
-  try {
-    // Try localStorage first (browser environment)
-    if (typeof window !== 'undefined') {
-      const savedBuyPercents = localStorage.getItem('conditionBuyPercents');
-      const savedMarkup = localStorage.getItem('sellMarkupPercent');
-      
-      if (savedBuyPercents && savedMarkup) {
-        const percents = JSON.parse(savedBuyPercents);
-        return {
-          conditionMultipliers: percents,
-          sellMarkup: parseFloat(savedMarkup)
-        };
-      }
-    }
-    
-    // Try Firebase
-    const settingsRef = doc(db, 'settings', 'pricing');
-    const settingsDoc = await getDoc(settingsRef);
-    
-    if (settingsDoc.exists()) {
-      const data = settingsDoc.data();
-      return {
-        conditionMultipliers: data.conditionMultipliers || {
-          NM: 70, LP: 65, MP: 55, HP: 45, DMG: 35
-        },
-        sellMarkup: data.sellMarkup || 40
-      };
-    }
-    
-    // Return defaults
-    return {
-      conditionMultipliers: {
-        NM: 70, LP: 65, MP: 55, HP: 45, DMG: 35
-      },
-      sellMarkup: 40
-    };
-  } catch (error) {
-    console.error('Error getting pricing settings:', error);
-    // Return defaults on error
-    return {
-      conditionMultipliers: {
-        NM: 70, LP: 65, MP: 55, HP: 45, DMG: 35
-      },
-      sellMarkup: 40
-    };
-  }
-}
-
-/**
- * Update pricing settings in localStorage and optionally Firebase
- */
-export async function updatePricingSettings(
-  conditionMultipliers: Record<string, number>,
-  sellMarkup: number,
-  saveToFirebase: boolean = false
-): Promise<void> {
-  try {
-    // Always save to localStorage (browser)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('conditionBuyPercents', JSON.stringify(conditionMultipliers));
-      localStorage.setItem('sellMarkupPercent', sellMarkup.toString());
-      console.log('✅ Saved to localStorage:', { conditionMultipliers, sellMarkup });
-    }
-    
-    // Optionally save to Firebase
-    if (saveToFirebase) {
-      const settingsRef = doc(db, 'settings', 'pricing');
-      await setDoc(settingsRef, {
-        conditionMultipliers,
-        sellMarkup,
-        updatedAt: new Date().toISOString()
-      });
-      console.log('✅ Saved to Firebase');
-    }
-  } catch (error) {
-    console.error('❌ Failed to update pricing settings:', error);
+    console.error("Error locking sell price:", error);
     throw error;
   }
 }

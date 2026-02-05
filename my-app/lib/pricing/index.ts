@@ -13,6 +13,7 @@ export async function calculateSellPrice(
   condition: Condition,
 ): Promise<number> {
   if (!marketPrice || marketPrice <= 0) return 0;
+
   const rules = await getPricingRules();
   const rule = rules.find(
     (r) =>
@@ -21,6 +22,7 @@ export async function calculateSellPrice(
       marketPrice < r.priceRange.max &&
       r.enabled,
   );
+
   if (!rule) return roundToNearest(marketPrice, 0.5);
 
   switch (rule.strategy) {
@@ -42,12 +44,14 @@ function applyBinPricing(price: number, params: BinParams): number {
 }
 
 function applyRounding(price: number, params: RoundingParams): number {
-  const { roundTo, direction } = params;
+  const { roundTo, direction = "nearest" } = params;
+
   switch (direction) {
     case "up":
       return Math.ceil(price / roundTo) * roundTo;
     case "down":
       return Math.floor(price / roundTo) * roundTo;
+    case "nearest":
     default:
       return Math.round(price / roundTo) * roundTo;
   }
@@ -64,8 +68,15 @@ function roundToNearest(value: number, increment: number): number {
 }
 
 async function getPricingRules(): Promise<PricingRule[]> {
-  const rulesDoc = await getDoc(doc(db, "pricingRules", "default"));
-  if (rulesDoc.exists()) return rulesDoc.data().rules || DEFAULT_RULES;
+  try {
+    const rulesDoc = await getDoc(doc(db, "pricingRules", "default"));
+    if (rulesDoc.exists()) {
+      const data = rulesDoc.data();
+      return (data?.rules as PricingRule[]) || DEFAULT_RULES;
+    }
+  } catch (error) {
+    console.error("Error fetching pricing rules:", error);
+  }
   return DEFAULT_RULES;
 }
 
@@ -129,8 +140,13 @@ export const DEFAULT_RULES: PricingRule[] = [
 ];
 
 export async function lockSellPrice(sku: string): Promise<void> {
-  await updateDoc(doc(db, "inventory", sku), {
-    sellPriceLockedAt: new Date(),
-    status: "labeled",
-  });
+  try {
+    await updateDoc(doc(db, "inventory", sku), {
+      sellPriceLockedAt: new Date(),
+      status: "labeled",
+    });
+  } catch (error) {
+    console.error("Error locking sell price:", error);
+    throw error;
+  }
 }
