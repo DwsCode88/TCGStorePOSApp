@@ -80,6 +80,54 @@ export function calculateCostBasis(
   }
 }
 
+// Synchronous version for bulk upload (doesn't fetch Firestore rules)
+export function calculateSellPriceSync(
+  marketPrice: number,
+  condition: string = "NM",
+  markup: number = 30,
+): number {
+  if (!marketPrice || marketPrice <= 0) return 0;
+
+  // Apply condition discount
+  const normalizedCondition = condition.toUpperCase().trim();
+  let adjustedPrice = marketPrice;
+
+  switch (normalizedCondition) {
+    case "LP":
+    case "LIGHTLY PLAYED":
+      adjustedPrice = marketPrice * 0.9; // -10%
+      break;
+    case "MP":
+    case "MODERATELY PLAYED":
+      adjustedPrice = marketPrice * 0.8; // -20%
+      break;
+    case "HP":
+    case "HEAVILY PLAYED":
+      adjustedPrice = marketPrice * 0.65; // -35%
+      break;
+    case "DMG":
+    case "DAMAGED":
+      adjustedPrice = marketPrice * 0.5; // -50%
+      break;
+    default:
+      adjustedPrice = marketPrice; // NM, no adjustment
+  }
+
+  // Apply markup
+  const sellPrice = adjustedPrice * (1 + markup / 100);
+
+  // Smart rounding based on price
+  if (sellPrice < 5) {
+    return roundToNearest(sellPrice, 0.25);
+  } else if (sellPrice < 20) {
+    return roundToNearest(sellPrice, 0.5);
+  } else if (sellPrice < 100) {
+    return roundToNearest(sellPrice, 1.0);
+  } else {
+    return Math.ceil(sellPrice / 5) * 5; // Round up to nearest $5
+  }
+}
+
 function applyBinPricing(price: number, params: BinParams): number {
   return params.bins.reduce((prev, curr) =>
     Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev,
