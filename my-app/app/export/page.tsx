@@ -82,16 +82,20 @@ export default function ExportPage() {
 
     console.log(`📤 Exporting ${selectedItems.length} items to CSV...`);
 
+    // Count items with vendor codes
+    const vendorCodeItems = selectedItems.filter(item => item.customerVendorCode);
+    console.log(`👤 Found ${vendorCodeItems.length} items with vendor codes`);
+    vendorCodeItems.forEach(item => {
+      console.log(`  - ${item.cardName}: Vendor Code = ${item.customerVendorCode}`);
+    });
+
     // Count consignment items
     const consignmentItems = selectedItems.filter(item => 
       item.acquisitionType?.toLowerCase() === 'consignment'
     );
-    console.log(`🤝 Found ${consignmentItems.length} consignment items`);
-    consignmentItems.forEach(item => {
-      if (item.customerVendorCode) {
-        console.log(`  - ${item.cardName}: Vendor Code = ${item.customerVendorCode}`);
-      }
-    });
+    if (consignmentItems.length > 0) {
+      console.log(`🤝 Found ${consignmentItems.length} consignment items`);
+    }
 
     // CSV Headers (36 columns)
     const headers = [
@@ -142,9 +146,8 @@ export default function ExportPage() {
 
       // Determine vendor and consignment status
       const isConsignment = item.acquisitionType?.toLowerCase() === 'consignment';
-      const primaryVendor = isConsignment && item.customerVendorCode 
-        ? item.customerVendorCode 
-        : '5325102';
+      // Always use vendor code if available (for any acquisition type)
+      const primaryVendor = item.customerVendorCode || '5325102';
       const vendorConsignment = isConsignment ? 'yes' : 'no';
 
       return [
@@ -273,7 +276,7 @@ export default function ExportPage() {
           <div className="text-xs text-gray-500 mb-4">
             <p><strong>Format:</strong> 36 columns, POS-compatible</p>
             <p><strong>Category IDs:</strong> Pokemon = 683,686 | One Piece = 683,684</p>
-            <p><strong>Vendor:</strong> 5325102 (or customer code for consignment)</p>
+            <p><strong>Vendor:</strong> Uses vendor code if available, otherwise defaults to 5325102</p>
           </div>
         </div>
 
@@ -321,13 +324,18 @@ export default function ExportPage() {
                   <td className="p-3">${(item.sellPrice || 0).toFixed(2)}</td>
                   <td className="p-3">{item.quantity || 1}</td>
                   <td className="p-3 text-xs">
-                    {item.acquisitionType === 'consignment' ? (
-                      <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded">
-                        {item.customerVendorCode || 'CONSIGN'}
+                    {item.customerVendorCode ? (
+                      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded">
+                        {item.customerVendorCode}
                       </span>
                     ) : (
-                      <span className="px-2 py-1 bg-green-100 text-green-800 rounded">
+                      <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded">
                         5325102
+                      </span>
+                    )}
+                    {item.acquisitionType === 'consignment' && (
+                      <span className="ml-1 px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
+                        consign
                       </span>
                     )}
                   </td>
