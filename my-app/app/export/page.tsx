@@ -223,7 +223,7 @@ export default function ExportPage() {
         '',                              // Tax Code
         vendorConsignment,               // Vendor Consignment
         '',                              // Alt Barcode Title
-        item.location || ''              // Bin Location
+        ''                               // Bin Location (empty)
       ];
     });
 
