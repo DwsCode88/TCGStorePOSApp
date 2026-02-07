@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { db } from '@/lib/firebase/config';
+import { db } from '@/lib/firebase/client';
 import { collection, getDocs } from 'firebase/firestore';
 
 interface InventoryItem {
