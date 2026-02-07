@@ -205,7 +205,7 @@ export default function ExportPage() {
         '',                              // Manufacturer
         primaryVendor,                   // Primary Vendor (5325102 or customer code)
         '',                              // Serial Number
-        item.location || '',             // Store Location ID
+        '27891',                         // Store Location ID (fixed)
         '',                              // Weight
         (item.costBasis || 0).toFixed(2), // Default Cost
         (item.sellPrice || 0).toFixed(2), // Price
@@ -371,6 +371,7 @@ export default function ExportPage() {
           <div className="text-xs text-gray-500 mb-4">
             <p><strong>Format:</strong> 36 columns, POS-compatible</p>
             <p><strong>Category IDs:</strong> Pokemon = 683,686 | One Piece = 683,684</p>
+            <p><strong>Store Location:</strong> 27891 (fixed for all items)</p>
             <p><strong>Availability:</strong> {availability} (configurable above)</p>
             <p><strong>Vendor:</strong> Extracted from SKU (last segment) or defaults to 5325102</p>
             <p className="text-xs mt-1">Example: POK-CELE-0060-<strong>KYLEW</strong> → Primary Vendor = KYLEW</p>
