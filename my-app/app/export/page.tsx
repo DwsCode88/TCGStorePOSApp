@@ -26,9 +26,15 @@ export default function ExportPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [availability, setAvailability] = useState<'web' | 'store' | 'both'>('both');
 
   useEffect(() => {
     loadInventory();
+    // Load saved availability setting
+    const saved = localStorage.getItem('exportAvailability');
+    if (saved === 'web' || saved === 'store' || saved === 'both') {
+      setAvailability(saved);
+    }
   }, []);
 
   const loadInventory = async () => {
@@ -81,6 +87,7 @@ export default function ExportPage() {
     }
 
     console.log(`📤 Exporting ${selectedItems.length} items to CSV...`);
+    console.log(`📦 Availability setting: ${availability}`);
 
     // Extract vendor codes from items
     const itemsWithVendorCodes = selectedItems.map(item => {
@@ -187,7 +194,7 @@ export default function ExportPage() {
         title,                           // Product Title
         description,                     // Short Description
         'each',                          // Unit of Measurement
-        'both',                          // Availability
+        availability,                    // Availability (from settings)
         'no',                            // Unlimited Inventory
         '',                              // Options
         '',                              // Assigned option values
@@ -266,6 +273,12 @@ export default function ExportPage() {
     }
   };
 
+  const handleAvailabilityChange = (value: 'web' | 'store' | 'both') => {
+    setAvailability(value);
+    localStorage.setItem('exportAvailability', value);
+    console.log(`📦 Availability setting changed to: ${value}`);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
@@ -303,9 +316,62 @@ export default function ExportPage() {
             </div>
           </div>
 
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              ⚙️ Availability Setting
+            </label>
+            <div className="flex gap-3">
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="availability"
+                  value="web"
+                  checked={availability === 'web'}
+                  onChange={(e) => handleAvailabilityChange(e.target.value as 'web')}
+                  className="mr-2"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Web Only</span>
+                  <span className="text-gray-500 ml-1">(online store)</span>
+                </span>
+              </label>
+              
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="availability"
+                  value="store"
+                  checked={availability === 'store'}
+                  onChange={(e) => handleAvailabilityChange(e.target.value as 'store')}
+                  className="mr-2"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Store Only</span>
+                  <span className="text-gray-500 ml-1">(in-person)</span>
+                </span>
+              </label>
+              
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="availability"
+                  value="both"
+                  checked={availability === 'both'}
+                  onChange={(e) => handleAvailabilityChange(e.target.value as 'both')}
+                  className="mr-2"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Both</span>
+                  <span className="text-gray-500 ml-1">(web + store)</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
           <div className="text-xs text-gray-500 mb-4">
             <p><strong>Format:</strong> 36 columns, POS-compatible</p>
             <p><strong>Category IDs:</strong> Pokemon = 683,686 | One Piece = 683,684</p>
+            <p><strong>Availability:</strong> {availability} (configurable above)</p>
             <p><strong>Vendor:</strong> Extracted from SKU (last segment) or defaults to 5325102</p>
             <p className="text-xs mt-1">Example: POK-CELE-0060-<strong>KYLEW</strong> → Primary Vendor = KYLEW</p>
           </div>
