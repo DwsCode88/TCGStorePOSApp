@@ -122,16 +122,16 @@ export default function ExportPage() {
       console.log(`🤝 Found ${consignmentItems.length} consignment items`);
     }
 
-    // CSV Headers (36 columns)
+    // CSV Headers (36 columns) - Match exact POS template format
     const headers = [
-      'Category IDs',
+      'Category IDs (Comma separate)',
       'Dept Code',
       'Status',
       'Product Title',
       'Short Description',
-      'Unit of Measurement',
-      'Availability',
-      'Unlimited Inventory',
+      'Unit of Measurement(each/per yard)',
+      'Availability(web/store/both)',
+      'Unlimited Inventory(yes/no)',
       'Options',
       'Assigned option values',
       'sku',
@@ -154,10 +154,10 @@ export default function ExportPage() {
       'Re-Order Point',
       'Desired Stock Level',
       'Case Unit Qty',
-      'Retail Unit Type',
-      'Case Unit Type',
+      'Retail Unit Type(items,inches,feet,yards,meters)',
+      'Case Unit Type(case,bolt,box,roll,pack)',
       'Tax Code',
-      'Vendor Consignment',
+      'Vendor Consignment (yes/no)',
       'Alt Barcode Title',
       'Bin Location'
     ];
