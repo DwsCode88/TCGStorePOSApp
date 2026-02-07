@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase/client';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, setDoc } from 'firebase/firestore';
 
 interface InventoryItem {
   id: string;
@@ -20,16 +20,31 @@ interface InventoryItem {
   acquisitionType?: string;
   customerId?: string;
   customerVendorCode?: string;
+  exported?: boolean;
+  exportedAt?: string;
+  batchId?: string;
+}
+
+interface ExportBatch {
+  id: string;
+  date: string;
+  itemCount: number;
+  totalValue: number;
+  fileName: string;
+  items: string[]; // Array of item IDs
 }
 
 export default function ExportPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [batches, setBatches] = useState<ExportBatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [availability, setAvailability] = useState<'web' | 'store' | 'both'>('both');
+  const [showBatches, setShowBatches] = useState(false);
 
   useEffect(() => {
     loadInventory();
+    loadBatches();
     // Load saved availability setting
     const saved = localStorage.getItem('exportAvailability');
     if (saved === 'web' || saved === 'store' || saved === 'both') {
@@ -44,11 +59,34 @@ export default function ExportPage() {
         id: doc.id,
         ...doc.data()
       })) as InventoryItem[];
-      setItems(data);
+      
+      // Filter out items that have been exported
+      const unexportedItems = data.filter(item => !item.exported);
+      setItems(unexportedItems);
+      
+      console.log(`📦 Loaded ${data.length} total items, ${unexportedItems.length} need export`);
     } catch (error) {
       console.error('Error loading inventory:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadBatches = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'exportBatches'));
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as ExportBatch[];
+      
+      // Sort by date, newest first
+      data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setBatches(data);
+      
+      console.log(`📋 Loaded ${data.length} export batches`);
+    } catch (error) {
+      console.error('Error loading batches:', error);
     }
   };
 
@@ -78,7 +116,7 @@ export default function ExportPage() {
     return categories.join(',');
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
     const selectedItems = items.filter(item => selected.has(item.id));
     
     if (selectedItems.length === 0) {
@@ -253,6 +291,45 @@ export default function ExportPage() {
     document.body.removeChild(link);
 
     console.log('✅ CSV export complete!');
+
+    // Create batch and mark items as exported
+    try {
+      const batchId = `batch_${Date.now()}`;
+      const now = new Date().toISOString();
+      const totalValue = selectedItems.reduce((sum, item) => sum + (item.sellPrice || 0) * (item.quantity || 1), 0);
+
+      // Create batch record
+      await setDoc(doc(db, 'exportBatches', batchId), {
+        date: now,
+        itemCount: selectedItems.length,
+        totalValue,
+        fileName: `vaulttrove-batch-${date}.csv`,
+        items: selectedItems.map(item => item.id)
+      });
+
+      // Mark items as exported
+      const updatePromises = selectedItems.map(item =>
+        updateDoc(doc(db, 'inventory', item.id), {
+          exported: true,
+          exportedAt: now,
+          batchId
+        })
+      );
+      await Promise.all(updatePromises);
+
+      console.log(`✅ Batch ${batchId} created with ${selectedItems.length} items`);
+      console.log(`💰 Total value: $${totalValue.toFixed(2)}`);
+
+      // Reload data
+      await loadInventory();
+      await loadBatches();
+      setSelected(new Set());
+
+      alert(`✅ Exported ${selectedItems.length} items!\n\nBatch created and items cleared from export queue.`);
+    } catch (error) {
+      console.error('Error creating batch:', error);
+      alert('CSV downloaded but failed to create batch record. Items not marked as exported.');
+    }
   };
 
   const toggleSelect = (id: string) => {
@@ -279,6 +356,165 @@ export default function ExportPage() {
     console.log(`📦 Availability setting changed to: ${value}`);
   };
 
+  const reExportBatch = async (batch: ExportBatch) => {
+    try {
+      console.log(`🔄 Re-exporting batch ${batch.id}...`);
+      
+      // Get the items from this batch
+      const snapshot = await getDocs(collection(db, 'inventory'));
+      const allItems = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as InventoryItem[];
+      
+      const batchItems = allItems.filter(item => batch.items.includes(item.id));
+      
+      if (batchItems.length === 0) {
+        alert('No items found for this batch');
+        return;
+      }
+
+      console.log(`Found ${batchItems.length} items from batch`);
+
+      // Generate CSV using the same logic as exportToCSV
+      const headers = [
+        'Category IDs (Comma separate)',
+        'Dept Code',
+        'Status',
+        'Product Title',
+        'Short Description',
+        'Unit of Measurement(each/per yard)',
+        'Availability(web/store/both)',
+        'Unlimited Inventory(yes/no)',
+        'Options',
+        'Assigned option values',
+        'sku',
+        'upc',
+        'Manufacturer Product Id',
+        'Alternate Lookups',
+        'Manufacturer',
+        'Primary Vendor',
+        'Serial Number',
+        'Store Location ID',
+        'Weight',
+        'Default Cost',
+        'Price',
+        'Sale Price',
+        'Wholesale Price',
+        'MAP Price',
+        'Wholesale Description',
+        'Cost',
+        'Inventory',
+        'Re-Order Point',
+        'Desired Stock Level',
+        'Case Unit Qty',
+        'Retail Unit Type(items,inches,feet,yards,meters)',
+        'Case Unit Type(case,bolt,box,roll,pack)',
+        'Tax Code',
+        'Vendor Consignment (yes/no)',
+        'Alt Barcode Title',
+        'Bin Location'
+      ];
+
+      const rows = batchItems.map(item => {
+        const title = `${item.cardName}${item.setName ? ' - ' + item.setName : ''}`;
+        const description = [item.game, item.printing, item.condition].filter(Boolean).join(' | ');
+        const isConsignment = item.acquisitionType?.toLowerCase() === 'consignment';
+        let vendorCode = item.customerVendorCode || '';
+        if (!vendorCode && item.sku) {
+          const skuParts = item.sku.split('-');
+          if (skuParts.length >= 4) {
+            vendorCode = skuParts[skuParts.length - 1];
+          }
+        }
+        const primaryVendor = vendorCode || '5325102';
+        const vendorConsignment = isConsignment ? 'yes' : 'no';
+
+        const getCategoryIDs = (item: InventoryItem): string => {
+          const game = (item.game || '').toLowerCase();
+          const categories: string[] = ['683'];
+          const isGraded = item.condition?.toLowerCase().includes('graded') ||
+            item.notes?.toLowerCase().includes('graded') ||
+            item.printing?.toLowerCase().includes('graded');
+          if (game.includes('one piece')) {
+            categories.push('684');
+            if (isGraded) categories.push('687');
+          } else if (game.includes('pokemon')) {
+            categories.push('686');
+            if (isGraded) categories.push('688');
+          }
+          return categories.join(',');
+        };
+
+        return [
+          getCategoryIDs(item),
+          '',
+          'active',
+          title,
+          description,
+          'each',
+          availability,
+          'no',
+          '',
+          '',
+          item.sku,
+          '',
+          '',
+          '',
+          '',
+          primaryVendor,
+          '',
+          '27891',
+          '',
+          (item.costBasis || 0).toFixed(2),
+          (item.sellPrice || 0).toFixed(2),
+          '',
+          '',
+          '',
+          '',
+          (item.costBasis || 0).toFixed(2),
+          (item.quantity || 1).toString(),
+          '',
+          '',
+          '',
+          'items',
+          '',
+          '',
+          vendorConsignment,
+          '',
+          ''
+        ];
+      });
+
+      const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => {
+          const stringCell = String(cell);
+          if (stringCell.includes(',') || stringCell.includes('"') || stringCell.includes('\n')) {
+            return `"${stringCell.replace(/"/g, '""')}"`;
+          }
+          return stringCell;
+        }).join(','))
+        .join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      
+      link.setAttribute('href', url);
+      link.setAttribute('download', batch.fileName);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      console.log('✅ Batch re-exported successfully!');
+      alert(`✅ Re-exported batch: ${batch.fileName}`);
+    } catch (error) {
+      console.error('Error re-exporting batch:', error);
+      alert('Failed to re-export batch');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
@@ -293,7 +529,44 @@ export default function ExportPage() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h1 className="text-2xl font-bold mb-4">Export to POS (36 Columns)</h1>
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold">Export to POS (36 Columns)</h1>
+            
+            <button
+              onClick={() => setShowBatches(!showBatches)}
+              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+            >
+              {showBatches ? '📦 Hide Batches' : '📋 View Batches'}
+            </button>
+          </div>
+
+          {showBatches && (
+            <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <h2 className="text-lg font-semibold mb-3">📋 Export Batches</h2>
+              {batches.length === 0 ? (
+                <p className="text-gray-500 text-sm">No batches yet. Export some items to create your first batch!</p>
+              ) : (
+                <div className="space-y-2">
+                  {batches.map(batch => (
+                    <div key={batch.id} className="flex items-center justify-between p-3 bg-white rounded border">
+                      <div className="flex-1">
+                        <div className="font-medium">{batch.fileName}</div>
+                        <div className="text-sm text-gray-600">
+                          {new Date(batch.date).toLocaleString()} • {batch.itemCount} items • ${batch.totalValue.toFixed(2)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => reExportBatch(batch)}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                      >
+                        🔄 Re-export
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           
           <div className="flex gap-4 items-center mb-4">
             <button
@@ -312,7 +585,7 @@ export default function ExportPage() {
             </button>
 
             <div className="text-sm text-gray-600">
-              {items.length} total items | {selected.size} selected
+              {items.length} need export | {selected.size} selected
             </div>
           </div>
 
@@ -375,6 +648,9 @@ export default function ExportPage() {
             <p><strong>Availability:</strong> {availability} (configurable above)</p>
             <p><strong>Vendor:</strong> Extracted from SKU (last segment) or defaults to 5325102</p>
             <p className="text-xs mt-1">Example: POK-CELE-0060-<strong>KYLEW</strong> → Primary Vendor = KYLEW</p>
+            <p className="text-xs mt-2 text-blue-600">
+              ℹ️ Items are cleared from this list after export and saved in batches. Use "View Batches" to re-export if needed.
+            </p>
           </div>
         </div>
 
