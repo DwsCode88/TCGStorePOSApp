@@ -82,11 +82,29 @@ export default function ExportPage() {
 
     console.log(`📤 Exporting ${selectedItems.length} items to CSV...`);
 
+    // Extract vendor codes from items
+    const itemsWithVendorCodes = selectedItems.map(item => {
+      let vendorCode = item.customerVendorCode || '';
+      
+      // Try to extract from SKU if not in field
+      if (!vendorCode && item.sku) {
+        const skuParts = item.sku.split('-');
+        if (skuParts.length >= 4) {
+          vendorCode = skuParts[skuParts.length - 1];
+        }
+      }
+      
+      return { ...item, extractedVendorCode: vendorCode };
+    });
+
     // Count items with vendor codes
-    const vendorCodeItems = selectedItems.filter(item => item.customerVendorCode);
+    const vendorCodeItems = itemsWithVendorCodes.filter(item => item.extractedVendorCode);
     console.log(`👤 Found ${vendorCodeItems.length} items with vendor codes`);
-    vendorCodeItems.forEach(item => {
-      console.log(`  - ${item.cardName}: Vendor Code = ${item.customerVendorCode}`);
+    
+    // Show sample vendor codes
+    const vendorSamples = vendorCodeItems.slice(0, 5);
+    vendorSamples.forEach(item => {
+      console.log(`  - ${item.cardName}: ${item.extractedVendorCode} (from ${item.customerVendorCode ? 'field' : 'SKU'})`);
     });
 
     // Count consignment items
@@ -146,8 +164,20 @@ export default function ExportPage() {
 
       // Determine vendor and consignment status
       const isConsignment = item.acquisitionType?.toLowerCase() === 'consignment';
-      // Always use vendor code if available (for any acquisition type)
-      const primaryVendor = item.customerVendorCode || '5325102';
+      
+      // Get vendor code - check field first, then extract from SKU
+      let vendorCode = item.customerVendorCode || '';
+      
+      // If no vendor code field, try to extract from SKU (format: PREFIX-SET-NUMBER-VENDORCODE)
+      if (!vendorCode && item.sku) {
+        const skuParts = item.sku.split('-');
+        // If SKU has 4 parts, last part is vendor code
+        if (skuParts.length >= 4) {
+          vendorCode = skuParts[skuParts.length - 1];
+        }
+      }
+      
+      const primaryVendor = vendorCode || '5325102';
       const vendorConsignment = isConsignment ? 'yes' : 'no';
 
       return [
@@ -276,7 +306,8 @@ export default function ExportPage() {
           <div className="text-xs text-gray-500 mb-4">
             <p><strong>Format:</strong> 36 columns, POS-compatible</p>
             <p><strong>Category IDs:</strong> Pokemon = 683,686 | One Piece = 683,684</p>
-            <p><strong>Vendor:</strong> Uses vendor code if available, otherwise defaults to 5325102</p>
+            <p><strong>Vendor:</strong> Extracted from SKU (last segment) or defaults to 5325102</p>
+            <p className="text-xs mt-1">Example: POK-CELE-0060-<strong>KYLEW</strong> → Primary Vendor = KYLEW</p>
           </div>
         </div>
 
@@ -301,46 +332,57 @@ export default function ExportPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map(item => (
-                <tr 
-                  key={item.id}
-                  className={`border-b hover:bg-gray-50 ${selected.has(item.id) ? 'bg-blue-50' : ''}`}
-                >
-                  <td className="p-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(item.id)}
-                      onChange={() => toggleSelect(item.id)}
-                    />
-                  </td>
-                  <td className="p-3 text-sm font-mono">{item.sku}</td>
-                  <td className="p-3">{item.cardName}</td>
-                  <td className="p-3 text-sm text-gray-600">{item.setName}</td>
-                  <td className="p-3 text-sm">
-                    <span className="px-2 py-1 bg-gray-100 rounded text-xs">
-                      {item.game}
-                    </span>
-                  </td>
-                  <td className="p-3">${(item.sellPrice || 0).toFixed(2)}</td>
-                  <td className="p-3">{item.quantity || 1}</td>
-                  <td className="p-3 text-xs">
-                    {item.customerVendorCode ? (
-                      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded">
-                        {item.customerVendorCode}
+              {items.map(item => {
+                // Extract vendor code from SKU if not in field
+                let vendorCode = item.customerVendorCode || '';
+                if (!vendorCode && item.sku) {
+                  const skuParts = item.sku.split('-');
+                  if (skuParts.length >= 4) {
+                    vendorCode = skuParts[skuParts.length - 1];
+                  }
+                }
+                
+                return (
+                  <tr 
+                    key={item.id}
+                    className={`border-b hover:bg-gray-50 ${selected.has(item.id) ? 'bg-blue-50' : ''}`}
+                  >
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleSelect(item.id)}
+                      />
+                    </td>
+                    <td className="p-3 text-sm font-mono">{item.sku}</td>
+                    <td className="p-3">{item.cardName}</td>
+                    <td className="p-3 text-sm text-gray-600">{item.setName}</td>
+                    <td className="p-3 text-sm">
+                      <span className="px-2 py-1 bg-gray-100 rounded text-xs">
+                        {item.game}
                       </span>
-                    ) : (
-                      <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded">
-                        5325102
-                      </span>
-                    )}
-                    {item.acquisitionType === 'consignment' && (
-                      <span className="ml-1 px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
-                        consign
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="p-3">${(item.sellPrice || 0).toFixed(2)}</td>
+                    <td className="p-3">{item.quantity || 1}</td>
+                    <td className="p-3 text-xs">
+                      {vendorCode ? (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded font-mono">
+                          {vendorCode}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded">
+                          5325102
+                        </span>
+                      )}
+                      {item.acquisitionType === 'consignment' && (
+                        <span className="ml-1 px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
+                          consign
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
