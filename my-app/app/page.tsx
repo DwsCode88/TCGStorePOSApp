@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { InventoryItem } from "@/types/inventory";
 import {
-
-
   Package,
   Upload,
   CheckCircle,
@@ -22,6 +20,7 @@ import {
   FileDown,
   History,
   Archive,
+  FileUp,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -35,7 +34,7 @@ interface ExportBatch {
   filename: string;
 }
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default function DashboardPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -87,7 +86,7 @@ export default function DashboardPage() {
       loadedBatches.sort(
         (a, b) => b.exportedAt.getTime() - a.exportedAt.getTime(),
       );
-      setBatches(loadedBatches.slice(0, 5)); // Only show 5 most recent
+      setBatches(loadedBatches.slice(0, 5));
     } catch (error: any) {
       console.error("Failed to load batches:", error);
     }
@@ -475,12 +474,22 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Link href="/intake" className="block">
             <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
               <Upload className="w-10 h-10 text-blue-600 mb-3" />
               <h3 className="text-lg font-semibold mb-2">Add Inventory</h3>
               <p className="text-sm text-gray-600">Scan and price new cards</p>
+            </div>
+          </Link>
+
+          <Link href="/consignment-intake" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-purple-200 bg-purple-50">
+              <FileUp className="w-10 h-10 text-purple-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Import TCG CSV</h3>
+              <p className="text-sm text-gray-600">
+                Bulk upload from TCGPlayer
+              </p>
             </div>
           </Link>
 
