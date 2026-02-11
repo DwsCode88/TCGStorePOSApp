@@ -94,7 +94,10 @@ export default function BulkConsignmentIntake() {
       const snapshot = await getDocs(collection(db, "inventory"));
       const existingCards = snapshot.docs.map((doc) => ({
         id: doc.id,
-        ...doc.data(),
+        tcgplayerId: doc.data().tcgplayerId as string | undefined,
+        condition: doc.data().condition as string | undefined,
+        customerVendorCode: doc.data().customerVendorCode as string | undefined,
+        batchId: doc.data().batchId as string | undefined,
       }));
 
       const parsed: ParsedCard[] = cards.map((card) => {
