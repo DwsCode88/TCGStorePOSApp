@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import { db } from "@/lib/firebase/client";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-
-
+import { collection, addDoc, getDocs, query, where } from "firebase/firestore";
 
 interface ConsignmentCard {
   tcgplayerId: string;
@@ -21,20 +19,22 @@ interface ConsignmentCard {
 
 interface ParsedCard {
   consignmentCard: ConsignmentCard;
-  inventoryData: any;
+  status: "pending" | "success" | "error" | "duplicate";
+  error?: string;
+  firestoreId?: string;
+  existingBatch?: string;
+  existingVendor?: string;
+  isDuplicate?: boolean;
 }
-
-export const dynamic = 'force-dynamic';
 
 export default function BulkConsignmentIntake() {
   const [file, setFile] = useState<File | null>(null);
   const [vendorCode, setVendorCode] = useState("");
   const [parsedCards, setParsedCards] = useState<ParsedCard[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState({
-    current: 0,
-    total: 0,
-  });
+  const [checking, setChecking] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
 
   const parseConsignmentCSV = (text: string): ConsignmentCard[] => {
     const lines = text.split("\n").filter((line) => line.trim());
@@ -43,7 +43,6 @@ export default function BulkConsignmentIntake() {
     console.log(`📄 CSV has ${lines.length} lines (including header)`);
 
     for (let i = 1; i < lines.length; i++) {
-      // Split by comma, handling quoted fields
       const fields: string[] = [];
       let current = "";
       let inQuotes = false;
@@ -87,22 +86,76 @@ export default function BulkConsignmentIntake() {
     return cards;
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const uploadedFile = e.target.files?.[0];
-    if (uploadedFile) {
-      setFile(uploadedFile);
-      setParsedCards([]);
+  const checkForDuplicates = async (cards: ConsignmentCard[]) => {
+    console.log("🔍 Checking for duplicates in existing inventory...");
+    setChecking(true);
+
+    try {
+      const snapshot = await getDocs(collection(db, "inventory"));
+      const existingCards = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      const parsed: ParsedCard[] = cards.map((card) => {
+        // Check if this exact card exists (matching TCGPlayer ID and condition)
+        const duplicate = existingCards.find(
+          (existing) =>
+            existing.tcgplayerId === card.tcgplayerId &&
+            existing.condition?.toLowerCase() === card.condition.toLowerCase(),
+        );
+
+        if (duplicate) {
+          console.log(
+            `⚠️ Duplicate found: ${card.productName} - Already uploaded by ${duplicate.customerVendorCode || "unknown vendor"}`,
+          );
+          return {
+            consignmentCard: card,
+            status: "duplicate" as const,
+            isDuplicate: true,
+            existingBatch: duplicate.batchId || "Unknown batch",
+            existingVendor: duplicate.customerVendorCode || "Unknown vendor",
+          };
+        }
+
+        return {
+          consignmentCard: card,
+          status: "pending" as const,
+          isDuplicate: false,
+        };
+      });
+
+      setParsedCards(parsed);
+
+      const duplicateCount = parsed.filter((p) => p.isDuplicate).length;
+      const newCount = parsed.filter((p) => !p.isDuplicate).length;
+
+      console.log(
+        `✅ Duplicate check complete: ${newCount} new, ${duplicateCount} duplicates`,
+      );
+
+      if (duplicateCount > 0) {
+        alert(
+          `⚠️ Found ${duplicateCount} duplicate cards!\n\n${newCount} new cards can be uploaded.\n\nDuplicates are highlighted in yellow.`,
+        );
+      }
+    } catch (error) {
+      console.error("Error checking duplicates:", error);
+      alert("Failed to check for duplicates");
+    } finally {
+      setChecking(false);
     }
   };
 
-  const previewCards = async () => {
-    if (!file) {
-      alert("Please upload a CSV file");
-      return;
-    }
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFile = e.target.files?.[0];
+    if (!uploadedFile) return;
 
-    try {
-      const text = await file.text();
+    setFile(uploadedFile);
+    const reader = new FileReader();
+
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
       const cards = parseConsignmentCSV(text);
 
       if (cards.length === 0) {
@@ -110,375 +163,287 @@ export default function BulkConsignmentIntake() {
         return;
       }
 
-      const parsed: ParsedCard[] = cards.map((card) => ({
-        consignmentCard: card,
-        inventoryData: {
-          // Card Info
-          name: card.productName,
-          set: card.setName,
-          number: card.number,
-          rarity: card.rarity,
-          game: card.productLine,
+      // Automatically check for duplicates
+      await checkForDuplicates(cards);
+    };
 
-          // Condition & Pricing
-          condition: card.condition,
-          buyPrice: parseFloat(card.tcgMarketPrice) || 0,
-          sellPrice: parseFloat(card.tcgMarketPrice) * 1.3 || 0, // 30% markup
-
-          // Quantity
-          quantity: card.quantity,
-
-          // Consignment Info
-          vendorCode: "", // Will be set on export
-          isConsignment: true,
-
-          // TCGPlayer Info
-          tcgplayerId: card.tcgplayerId,
-          tcgMarketPrice: parseFloat(card.tcgMarketPrice) || 0,
-          imageUrl: card.photoUrl,
-
-          // Metadata
-          dateAdded: new Date().toISOString(),
-          addedBy: "bulk-consignment-import",
-          source: "tcgplayer-consignment-csv",
-        },
-      }));
-
-      setParsedCards(parsed);
-      console.log(`📋 Preview: ${cards.length} cards ready to export`);
-    } catch (error: any) {
-      console.error("Error parsing CSV:", error);
-      alert(`Error: ${error.message}`);
-    }
+    reader.readAsText(uploadedFile);
   };
 
-  const uploadToFirebase = async () => {
+  const uploadToInventory = async () => {
     if (!vendorCode.trim()) {
       alert("Please enter a vendor code");
       return;
     }
 
-    if (parsedCards.length === 0) {
-      alert("Please preview cards first");
+    // Filter cards based on skipDuplicates setting
+    const cardsToUpload = skipDuplicates
+      ? parsedCards.filter((p) => !p.isDuplicate)
+      : parsedCards;
+
+    if (cardsToUpload.length === 0) {
+      alert("No cards to upload!");
       return;
     }
 
+    const duplicateCount = parsedCards.filter((p) => p.isDuplicate).length;
+
+    const confirmMessage =
+      skipDuplicates && duplicateCount > 0
+        ? `Upload ${cardsToUpload.length} NEW cards?\n\n${duplicateCount} duplicates will be SKIPPED.`
+        : `Upload ${cardsToUpload.length} cards?`;
+
+    if (!confirm(confirmMessage)) return;
+
     setUploading(true);
-    setUploadProgress({ current: 0, total: parsedCards.length });
+    setProgress({ current: 0, total: cardsToUpload.length });
 
     console.log(
-      `\n🚀 Uploading ${parsedCards.length} cards to Firebase with vendor code: ${vendorCode}`,
+      `📤 Uploading ${cardsToUpload.length} cards with vendor code: ${vendorCode}`,
     );
 
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (let i = 0; i < parsedCards.length; i++) {
-      const parsed = parsedCards[i];
+    for (let i = 0; i < cardsToUpload.length; i++) {
+      const parsed = cardsToUpload[i];
+      const card = parsed.consignmentCard;
 
       try {
-        const cardData = {
-          ...parsed.inventoryData,
-          vendorCode: vendorCode.toUpperCase(),
-          dateAdded: serverTimestamp(),
-        };
+        const buyPrice = parseFloat(card.tcgMarketPrice) || 0;
+        const sellPrice = buyPrice * 1.3;
 
-        const docRef = await addDoc(collection(db, "inventory"), cardData);
-        console.log(
-          `✅ [${i + 1}/${parsedCards.length}] Uploaded: ${parsed.consignmentCard.productName} (${docRef.id})`,
-        );
-        successCount++;
+        const docRef = await addDoc(collection(db, "inventory"), {
+          cardName: card.productName,
+          setName: card.setName,
+          number: card.number,
+          game: card.productLine,
+          condition: card.condition,
+          rarity: card.rarity,
+          costBasis: buyPrice,
+          sellPrice: sellPrice,
+          quantity: card.quantity,
+          customerVendorCode: vendorCode.toUpperCase(),
+          acquisitionType: "consignment",
+          tcgplayerId: card.tcgplayerId,
+          imageUrl: card.photoUrl,
+          status: "pending",
+          createdAt: new Date(),
+        });
+
+        parsed.status = "success";
+        parsed.firestoreId = docRef.id;
+        console.log(`✅ Uploaded: ${card.productName}`);
       } catch (error: any) {
-        console.error(
-          `❌ [${i + 1}/${parsedCards.length}] Error: ${parsed.consignmentCard.productName}`,
-          error,
-        );
-        errorCount++;
+        parsed.status = "error";
+        parsed.error = error.message;
+        console.error(`❌ Failed: ${card.productName}`, error);
       }
 
-      setUploadProgress({ current: i + 1, total: parsedCards.length });
-
-      // Small delay to avoid overwhelming Firestore
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      setProgress({ current: i + 1, total: cardsToUpload.length });
+      setParsedCards([...parsedCards]);
     }
 
     setUploading(false);
 
-    console.log(`\n📊 UPLOAD COMPLETE:`);
-    console.log(`✅ Success: ${successCount}`);
-    console.log(`❌ Errors: ${errorCount}`);
+    const successCount = cardsToUpload.filter(
+      (p) => p.status === "success",
+    ).length;
+    const failCount = cardsToUpload.filter((p) => p.status === "error").length;
+    const skippedCount = parsedCards.filter(
+      (p) => p.isDuplicate && skipDuplicates,
+    ).length;
 
-    alert(
-      `Upload Complete!\n✅ ${successCount} cards added to inventory\n❌ ${errorCount} errors`,
-    );
+    let message = `✅ Upload complete!\n\n`;
+    message += `${successCount} cards uploaded successfully\n`;
+    if (failCount > 0) message += `${failCount} cards failed\n`;
+    if (skippedCount > 0) message += `${skippedCount} duplicates skipped`;
+
+    alert(message);
   };
 
-  const exportToJSON = () => {
-    if (!vendorCode.trim()) {
-      alert("Please enter a vendor code");
-      return;
-    }
-
-    if (parsedCards.length === 0) {
-      alert("Please preview cards first");
-      return;
-    }
-
-    console.log(
-      `\n📦 Exporting ${parsedCards.length} cards with vendor code: ${vendorCode}`,
+  const totalValue = parsedCards
+    .filter((p) => !p.isDuplicate || !skipDuplicates)
+    .reduce(
+      (sum, p) =>
+        sum +
+        parseFloat(p.consignmentCard.tcgMarketPrice) *
+          p.consignmentCard.quantity,
+      0,
     );
 
-    // Add vendor code to all cards
-    const exportData = parsedCards.map((parsed) => ({
-      ...parsed.inventoryData,
-      vendorCode: vendorCode.toUpperCase(),
-    }));
-
-    // Create JSON file
-    const jsonString = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `consignment_${vendorCode.toLowerCase()}_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    console.log(`✅ Exported ${exportData.length} cards to JSON`);
-    console.log(
-      `💰 Total Value: $${exportData.reduce((sum, c) => sum + c.buyPrice * c.quantity, 0).toFixed(2)}`,
-    );
-
-    alert(
-      `✅ Exported ${exportData.length} cards!\n\nFile: consignment_${vendorCode.toLowerCase()}_${Date.now()}.json\n\nYou can now import this JSON to your inventory system.`,
-    );
-  };
-
-  const exportToCSV = () => {
-    if (!vendorCode.trim()) {
-      alert("Please enter a vendor code");
-      return;
-    }
-
-    if (parsedCards.length === 0) {
-      alert("Please preview cards first");
-      return;
-    }
-
-    const csvLines = [
-      "Name,Set,Number,Rarity,Condition,Quantity,Buy Price,Sell Price,Vendor Code,TCG ID,Image URL",
-    ];
-
-    parsedCards.forEach((parsed) => {
-      const data = parsed.inventoryData;
-      csvLines.push(
-        [
-          `"${data.name}"`,
-          `"${data.set}"`,
-          `"${data.number}"`,
-          `"${data.rarity}"`,
-          data.condition,
-          data.quantity,
-          data.buyPrice.toFixed(2),
-          data.sellPrice.toFixed(2),
-          vendorCode.toUpperCase(),
-          data.tcgplayerId,
-          `"${data.imageUrl}"`,
-        ].join(","),
-      );
-    });
-
-    const blob = new Blob([csvLines.join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `consignment_${vendorCode.toLowerCase()}_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    alert(`✅ Exported ${parsedCards.length} cards to CSV!`);
-  };
-
-  const totalValue = parsedCards.reduce(
-    (sum, c) =>
-      sum +
-      (parseFloat(c.consignmentCard.tcgMarketPrice) || 0) *
-        c.consignmentCard.quantity,
-    0,
-  );
+  const duplicateCount = parsedCards.filter((p) => p.isDuplicate).length;
+  const newCount = parsedCards.filter((p) => !p.isDuplicate).length;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2">📦 Bulk Consignment Intake</h1>
-        <p className="text-gray-600 mb-8">
-          Upload TCGPlayer consignment CSV and assign vendor code
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold mb-2">Bulk Consignment Intake</h1>
+        <p className="text-gray-600 mb-6">
+          Upload TCGPlayer CSV with vendor code
         </p>
 
-        {/* Step 1: Upload CSV */}
+        {/* File Upload */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">
-            Step 1: Upload CSV File
-          </h2>
-
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">
-              TCGPlayer Consignment CSV
-            </label>
-            <input
-              type="file"
-              accept=".csv"
-              onChange={handleFileUpload}
-              className="block w-full text-sm border border-gray-300 rounded p-2"
-            />
-            {file && (
-              <p className="text-sm text-green-600 mt-2">✓ {file.name}</p>
-            )}
-          </div>
-
-          <button
-            onClick={previewCards}
-            disabled={!file}
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            📋 Preview Cards
-          </button>
+          <h2 className="text-xl font-semibold mb-4">1. Upload CSV File</h2>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="border rounded px-4 py-2 w-full"
+            disabled={checking || uploading}
+          />
+          {checking && (
+            <div className="mt-2 text-blue-600">
+              🔍 Checking for duplicates...
+            </div>
+          )}
         </div>
 
-        {/* Step 2: Assign Vendor Code */}
+        {/* Vendor Code */}
         {parsedCards.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-semibold mb-4">
-              Step 2: Assign Vendor Code & Export
+              2. Assign Vendor Code
             </h2>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">
-                Vendor Code (e.g., KYLE, JOHN, STORE)
-              </label>
-              <input
-                type="text"
-                value={vendorCode}
-                onChange={(e) => setVendorCode(e.target.value.toUpperCase())}
-                placeholder="Enter vendor code"
-                className="w-full border border-gray-300 rounded p-2 uppercase"
-                maxLength={20}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                This code will be added to all {parsedCards.length} cards
-              </p>
-            </div>
-
-            {/* Preview Stats */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div className="bg-blue-50 p-4 rounded">
-                <div className="text-2xl font-bold text-blue-700">
-                  {parsedCards.length}
-                </div>
-                <div className="text-sm text-gray-600">Total Cards</div>
-              </div>
-              <div className="bg-purple-50 p-4 rounded">
-                <div className="text-2xl font-bold text-purple-700">
-                  ${totalValue.toFixed(2)}
-                </div>
-                <div className="text-sm text-gray-600">
-                  Total Value (Buy Price)
-                </div>
-              </div>
-              <div className="bg-green-50 p-4 rounded">
-                <div className="text-2xl font-bold text-green-700">
-                  ${(totalValue * 1.3).toFixed(2)}
-                </div>
-                <div className="text-sm text-gray-600">
-                  Sell Value (30% markup)
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <button
-                onClick={exportToJSON}
-                disabled={!vendorCode.trim()}
-                className="flex-1 bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
-              >
-                📥 Export to JSON
-              </button>
-              <button
-                onClick={exportToCSV}
-                disabled={!vendorCode.trim()}
-                className="flex-1 bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
-              >
-                📥 Export to CSV
-              </button>
-            </div>
-
-            <p className="text-xs text-gray-500 mt-2 text-center">
-              Export files can be imported to your inventory system
-            </p>
+            <input
+              type="text"
+              value={vendorCode}
+              onChange={(e) => setVendorCode(e.target.value.toUpperCase())}
+              placeholder="Enter vendor code (e.g., KYLE)"
+              className="border rounded px-4 py-2 w-full text-lg font-mono"
+              disabled={uploading}
+            />
           </div>
         )}
 
-        {/* Step 3: Card List */}
+        {/* Duplicate Options */}
+        {duplicateCount > 0 && (
+          <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4 text-yellow-900">
+              ⚠️ {duplicateCount} Duplicate Card
+              {duplicateCount !== 1 ? "s" : ""} Found
+            </h2>
+            <div className="mb-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={skipDuplicates}
+                  onChange={(e) => setSkipDuplicates(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <span className="text-yellow-900">
+                  Skip duplicates (recommended - upload only {newCount} new
+                  cards)
+                </span>
+              </label>
+            </div>
+            <div className="text-sm text-yellow-800">
+              {skipDuplicates
+                ? `✅ Will upload ${newCount} new cards, skip ${duplicateCount} duplicates`
+                : `⚠️ Will upload ALL ${parsedCards.length} cards (including duplicates)`}
+            </div>
+          </div>
+        )}
+
+        {/* Summary */}
+        {parsedCards.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">3. Summary</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="border rounded p-3">
+                <div className="text-sm text-gray-600">Total Cards</div>
+                <div className="text-2xl font-bold">{parsedCards.length}</div>
+              </div>
+              <div className="border rounded p-3 bg-green-50">
+                <div className="text-sm text-green-600">New Cards</div>
+                <div className="text-2xl font-bold text-green-600">
+                  {newCount}
+                </div>
+              </div>
+              <div className="border rounded p-3 bg-yellow-50">
+                <div className="text-sm text-yellow-600">Duplicates</div>
+                <div className="text-2xl font-bold text-yellow-600">
+                  {duplicateCount}
+                </div>
+              </div>
+              <div className="border rounded p-3">
+                <div className="text-sm text-gray-600">Total Value</div>
+                <div className="text-2xl font-bold">
+                  ${totalValue.toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={uploadToInventory}
+              disabled={uploading || !vendorCode.trim()}
+              className="w-full bg-blue-600 text-white rounded-lg py-3 font-semibold hover:bg-blue-700 disabled:bg-gray-400"
+            >
+              {uploading
+                ? `⬆️ Uploading... ${progress.current}/${progress.total}`
+                : `⬆️ Upload ${skipDuplicates ? newCount : parsedCards.length} Cards to Inventory`}
+            </button>
+          </div>
+        )}
+
+        {/* Cards List */}
         {parsedCards.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold mb-4">Cards Preview</h2>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="text-left p-3">#</th>
-                    <th className="text-left p-3">Card</th>
-                    <th className="text-left p-3">Set</th>
-                    <th className="text-left p-3">Number</th>
-                    <th className="text-left p-3">Condition</th>
-                    <th className="text-left p-3">Qty</th>
-                    <th className="text-left p-3">Buy Price</th>
-                    <th className="text-left p-3">Sell Price</th>
-                    <th className="text-left p-3">Vendor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {parsedCards.map((parsed, i) => {
-                    const card = parsed.consignmentCard;
-                    const buyPrice = parseFloat(card.tcgMarketPrice) || 0;
-                    const sellPrice = buyPrice * 1.3;
-
-                    return (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="p-3 text-gray-500">{i + 1}</td>
-                        <td className="p-3">
-                          <div className="font-medium text-xs">
-                            {card.productName}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {card.rarity}
-                          </div>
-                        </td>
-                        <td className="p-3 text-xs">{card.setName}</td>
-                        <td className="p-3 text-xs">{card.number}</td>
-                        <td className="p-3 text-xs">{card.condition}</td>
-                        <td className="p-3 text-xs">{card.quantity}</td>
-                        <td className="p-3 text-xs font-semibold text-blue-700">
-                          ${buyPrice.toFixed(2)}
-                        </td>
-                        <td className="p-3 text-xs font-semibold text-green-700">
-                          ${sellPrice.toFixed(2)}
-                        </td>
-                        <td className="p-3">
-                          {vendorCode ? (
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-semibold">
-                              {vendorCode}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-400">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {parsedCards.map((parsed, idx) => (
+                <div
+                  key={idx}
+                  className={`border rounded p-3 ${
+                    parsed.isDuplicate
+                      ? "bg-yellow-50 border-yellow-400"
+                      : parsed.status === "success"
+                        ? "bg-green-50 border-green-400"
+                        : parsed.status === "error"
+                          ? "bg-red-50 border-red-400"
+                          : "bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="font-semibold">
+                        {parsed.consignmentCard.productName}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {parsed.consignmentCard.setName} •{" "}
+                        {parsed.consignmentCard.condition}
+                      </div>
+                      {parsed.isDuplicate && (
+                        <div className="text-sm text-yellow-700 mt-1">
+                          ⚠️ Already in inventory - Vendor:{" "}
+                          {parsed.existingVendor}
+                        </div>
+                      )}
+                      {parsed.status === "error" && (
+                        <div className="text-sm text-red-600 mt-1">
+                          ❌ Error: {parsed.error}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right ml-4">
+                      <div className="font-bold">
+                        ${parsed.consignmentCard.tcgMarketPrice}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Qty: {parsed.consignmentCard.quantity}
+                      </div>
+                      {parsed.isDuplicate && skipDuplicates && (
+                        <div className="text-xs text-yellow-600 mt-1">
+                          WILL SKIP
+                        </div>
+                      )}
+                      {parsed.status === "success" && (
+                        <div className="text-xs text-green-600 mt-1">
+                          ✅ UPLOADED
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
