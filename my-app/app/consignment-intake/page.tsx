@@ -43,6 +43,7 @@ export default function BulkConsignmentIntake() {
     null,
   );
   const [vendorCode, setVendorCode] = useState("");
+  const [payoutPercentage, setPayoutPercentage] = useState(70);
   const [parsedCards, setParsedCards] = useState<ParsedCard[]>([]);
   const [uploading, setUploading] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -71,6 +72,7 @@ export default function BulkConsignmentIntake() {
     const customer = customers.find((c) => c.id === customerId);
     setSelectedCustomer(customer || null);
     setVendorCode(customer?.vendorCode || "");
+    setPayoutPercentage(customer?.payoutPercentage || 70);
   };
 
   const parseConsignmentCSV = (text: string): ConsignmentCard[] => {
@@ -262,6 +264,7 @@ export default function BulkConsignmentIntake() {
           quantity: card.quantity,
           customerVendorCode: vendorCode.toUpperCase(),
           customerId: selectedCustomer?.id || null,
+          payoutPercentage: payoutPercentage,
           acquisitionType: "consignment",
           tcgplayerId: card.tcgplayerId,
           imageUrl: card.photoUrl,
@@ -309,6 +312,9 @@ export default function BulkConsignmentIntake() {
           p.consignmentCard.quantity,
       0,
     );
+
+  const customerPayout = totalValue * (payoutPercentage / 100);
+  const storePayout = totalValue - customerPayout;
 
   const duplicateCount = parsedCards.filter((p) => p.isDuplicate).length;
   const newCount = parsedCards.filter((p) => !p.isDuplicate).length;
@@ -366,7 +372,7 @@ export default function BulkConsignmentIntake() {
             </div>
 
             {/* Manual Vendor Code Input */}
-            <div>
+            <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Or Enter Vendor Code Manually
               </label>
@@ -378,13 +384,36 @@ export default function BulkConsignmentIntake() {
                 className="border rounded px-4 py-2 w-full text-lg font-mono"
                 disabled={uploading}
               />
+            </div>
+
+            {/* Payout Percentage */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Payout Percentage
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="number"
+                  value={payoutPercentage}
+                  onChange={(e) => setPayoutPercentage(Number(e.target.value))}
+                  min="0"
+                  max="100"
+                  className="border rounded px-4 py-2 w-32 text-lg"
+                  disabled={uploading}
+                />
+                <span className="text-gray-600">%</span>
+                <div className="flex-1 text-sm text-gray-600">
+                  Customer gets {payoutPercentage}%, Store gets{" "}
+                  {100 - payoutPercentage}%
+                </div>
+              </div>
               {selectedCustomer && (
                 <div className="mt-2 text-sm text-gray-600">
                   Selected:{" "}
                   <span className="font-semibold">{selectedCustomer.name}</span>
                   {selectedCustomer.payoutPercentage && (
-                    <span className="ml-2">
-                      (Payout: {selectedCustomer.payoutPercentage}%)
+                    <span className="ml-2 text-blue-600">
+                      (Default: {selectedCustomer.payoutPercentage}%)
                     </span>
                   )}
                 </div>
@@ -447,6 +476,35 @@ export default function BulkConsignmentIntake() {
                 <div className="text-sm text-gray-600">Total Value</div>
                 <div className="text-2xl font-bold">
                   ${totalValue.toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            {/* Payout Breakdown */}
+            <div className="border-t pt-4 mb-4">
+              <h3 className="font-semibold mb-3">Payout Breakdown</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-blue-50 border border-blue-200 rounded p-3">
+                  <div className="text-sm text-blue-600 mb-1">
+                    Customer Gets ({payoutPercentage}%)
+                  </div>
+                  <div className="text-2xl font-bold text-blue-600">
+                    ${customerPayout.toFixed(2)}
+                  </div>
+                  {vendorCode && (
+                    <div className="text-xs text-blue-500 mt-1">
+                      {vendorCode}
+                    </div>
+                  )}
+                </div>
+                <div className="bg-green-50 border border-green-200 rounded p-3">
+                  <div className="text-sm text-green-600 mb-1">
+                    Store Gets ({100 - payoutPercentage}%)
+                  </div>
+                  <div className="text-2xl font-bold text-green-600">
+                    ${storePayout.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-green-500 mt-1">Profit</div>
                 </div>
               </div>
             </div>
