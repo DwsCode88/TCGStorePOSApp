@@ -268,7 +268,7 @@ export default function BulkConsignmentIntake() {
           acquisitionType: "consignment",
           tcgplayerId: card.tcgplayerId,
           imageUrl: card.photoUrl,
-          status: "pending",
+          status: "priced", // ✅ FIXED: Changed from "pending" to "priced" so items appear on /labels/print
           createdAt: new Date(),
         });
 
