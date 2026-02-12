@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase/client";
 import { collection, addDoc, getDocs, query, where } from "firebase/firestore";
 
@@ -27,14 +27,51 @@ interface ParsedCard {
   isDuplicate?: boolean;
 }
 
+interface Customer {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  vendorCode: string;
+  payoutPercentage?: number;
+}
+
 export default function BulkConsignmentIntake() {
   const [file, setFile] = useState<File | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
+    null,
+  );
   const [vendorCode, setVendorCode] = useState("");
   const [parsedCards, setParsedCards] = useState<ParsedCard[]>([]);
   const [uploading, setUploading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [skipDuplicates, setSkipDuplicates] = useState(true);
+
+  useEffect(() => {
+    loadCustomers();
+  }, []);
+
+  const loadCustomers = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "customers"));
+      const loadedCustomers = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Customer[];
+      setCustomers(loadedCustomers);
+      console.log(`📋 Loaded ${loadedCustomers.length} customers`);
+    } catch (error) {
+      console.error("Error loading customers:", error);
+    }
+  };
+
+  const handleCustomerSelect = (customerId: string) => {
+    const customer = customers.find((c) => c.id === customerId);
+    setSelectedCustomer(customer || null);
+    setVendorCode(customer?.vendorCode || "");
+  };
 
   const parseConsignmentCSV = (text: string): ConsignmentCard[] => {
     const lines = text.split("\n").filter((line) => line.trim());
@@ -224,6 +261,7 @@ export default function BulkConsignmentIntake() {
           sellPrice: sellPrice,
           quantity: card.quantity,
           customerVendorCode: vendorCode.toUpperCase(),
+          customerId: selectedCustomer?.id || null,
           acquisitionType: "consignment",
           tcgplayerId: card.tcgplayerId,
           imageUrl: card.photoUrl,
@@ -304,16 +342,54 @@ export default function BulkConsignmentIntake() {
         {parsedCards.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-semibold mb-4">
-              2. Assign Vendor Code
+              2. Select Customer / Assign Vendor Code
             </h2>
-            <input
-              type="text"
-              value={vendorCode}
-              onChange={(e) => setVendorCode(e.target.value.toUpperCase())}
-              placeholder="Enter vendor code (e.g., KYLE)"
-              className="border rounded px-4 py-2 w-full text-lg font-mono"
-              disabled={uploading}
-            />
+
+            {/* Customer Selector */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select Existing Customer
+              </label>
+              <select
+                value={selectedCustomer?.id || ""}
+                onChange={(e) => handleCustomerSelect(e.target.value)}
+                className="border rounded px-4 py-2 w-full mb-2"
+                disabled={uploading}
+              >
+                <option value="">-- Select a customer --</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name} ({customer.vendorCode})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Manual Vendor Code Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Or Enter Vendor Code Manually
+              </label>
+              <input
+                type="text"
+                value={vendorCode}
+                onChange={(e) => setVendorCode(e.target.value.toUpperCase())}
+                placeholder="Enter vendor code (e.g., KYLE)"
+                className="border rounded px-4 py-2 w-full text-lg font-mono"
+                disabled={uploading}
+              />
+              {selectedCustomer && (
+                <div className="mt-2 text-sm text-gray-600">
+                  Selected:{" "}
+                  <span className="font-semibold">{selectedCustomer.name}</span>
+                  {selectedCustomer.payoutPercentage && (
+                    <span className="ml-2">
+                      (Payout: {selectedCustomer.payoutPercentage}%)
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
