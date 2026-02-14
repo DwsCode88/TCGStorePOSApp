@@ -130,7 +130,7 @@ export default function IntakePage() {
   const [suggestedPrice, setSuggestedPrice] = useState(0);
   const [profit, setProfit] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState(1); // 1=Search, 2=ConditionSelect, 3=Offer, 4=Details
+  const [step, setStep] = useState(1);
   const [sessionCards, setSessionCards] = useState<SessionCard[]>([]);
   const [showConditionModal, setShowConditionModal] = useState(false);
   const [tempSelectedCard, setTempSelectedCard] = useState<any>(null);
@@ -172,8 +172,6 @@ export default function IntakePage() {
 
   // Load settings and customers from localStorage/Firebase on mount
   useEffect(() => {
-    console.log('🔄 useEffect running - loading customers');
-    
     const savedBuyPercents = localStorage.getItem("conditionBuyPercents");
     const savedMarkup = localStorage.getItem("sellMarkupPercent");
 
@@ -187,40 +185,22 @@ export default function IntakePage() {
     // Load customers from Firebase
     const loadCustomers = async () => {
       try {
-        console.log('🔍 Loading customers from Firebase...');
         const snapshot = await getDocs(collection(db, "customers"));
-        console.log(`📊 Raw snapshot size: ${snapshot.size}`);
-        console.log(`📊 Docs length: ${snapshot.docs.length}`);
-        
-        const customerList = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          console.log(`👤 Customer ${doc.id}:`, data);
-          return {
-            id: doc.id,
-            name: data.name,
-            phone: data.phone || "",
-            email: data.email || "",
-            vendorCode: data.vendorCode || "",
-          };
-        });
-        
-        console.log('✅ Customer list created:', customerList);
-        console.log(`✅ Setting ${customerList.length} customers to state`);
+        const customerList = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          name: doc.data().name,
+          phone: doc.data().phone || "",
+          email: doc.data().email || "",
+          vendorCode: doc.data().vendorCode || "",
+        }));
         setCustomers(customerList);
-        console.log('✅ setCustomers called');
-        
       } catch (error) {
-        console.error("❌ Error loading customers:", error);
+        console.error("Error loading customers:", error);
       }
     };
 
     loadCustomers();
   }, []);
-
-  // Monitor customer state changes
-  useEffect(() => {
-    console.log('👥 Customers state changed:', customers.length, customers);
-  }, [customers]);
 
   const form = useForm<IntakeFormData>({
     resolver: zodResolver(intakeSchema),
@@ -284,13 +264,7 @@ export default function IntakePage() {
         totalOwed: 0,
       };
 
-      console.log('💾 Saving new customer:', customerData);
-
-     const docRef = await addDoc(collection(db, "customers"), customerData);
-
-    
-
-      console.log('✅ Customer saved with ID:', docRef.id);
+      const docRef = await addDoc(collection(db, "customers"), customerData);
 
       // Add to local state
       const newCustomerData = {
@@ -301,7 +275,6 @@ export default function IntakePage() {
         vendorCode: newCustomer.vendorCode,
       };
 
-      console.log('📝 Adding to local state:', newCustomerData);
       setCustomers([...customers, newCustomerData]);
       setSelectedCustomerId(docRef.id);
 
@@ -341,7 +314,7 @@ export default function IntakePage() {
         toast.success(`Found ${results.length} cards`);
       }
     } catch (error: any) {
-      console.error("❌ Search error:", error);
+      console.error("Search error:", error);
       toast.error(error.message || "Search failed");
       setSearchResults([]);
     } finally {
@@ -357,7 +330,6 @@ export default function IntakePage() {
     try {
       const breakdown = await getPricingBreakdown(market, acqType, cond);
 
-      // Check if Firebase returned condition-aware pricing
       const normalizedCond = cond.toUpperCase().trim();
       const expectedBuyPercent =
         conditionBuyPercents[
@@ -365,23 +337,19 @@ export default function IntakePage() {
         ] || conditionBuyPercents.NM;
       const expectedCost = market * (expectedBuyPercent / 100);
 
-      // If Firebase result is off by more than 1%, use local calculation
       const percentDiff =
         Math.abs((breakdown.costBasis - expectedCost) / expectedCost) * 100;
 
       if (percentDiff > 1) {
-        // Use local calculation
         let localCost = 0;
         if (acqType === "buy") {
           localCost = market * (expectedBuyPercent / 100);
         } else if (acqType === "trade") {
           localCost = market * ((expectedBuyPercent + 5) / 100);
         } else if (acqType === "consignment") {
-          // For consignment, cost is the payout to consignor
           const payoutPercent = form.getValues("consignorPayoutPercent") || 70;
-          localCost = market * 1.3 * (payoutPercent / 100); // market price * markup * payout %
+          localCost = market * 1.3 * (payoutPercent / 100);
         }
-        // Pull has 0 cost
 
         const localSell = localCost * (1 + sellMarkupPercent / 100);
         const localProfit = localSell - localCost;
@@ -391,14 +359,12 @@ export default function IntakePage() {
         setProfit(localProfit);
         form.setValue("costBasis", localCost);
       } else {
-        // Use Firebase pricing
         setCostBasis(breakdown.costBasis);
         setSuggestedPrice(breakdown.sellPrice);
         setProfit(breakdown.profit);
         form.setValue("costBasis", breakdown.costBasis);
       }
     } catch (error) {
-      // Fallback to local calculation
       const normalizedCond = cond.toUpperCase().trim();
       const buyPercent =
         conditionBuyPercents[
@@ -411,11 +377,9 @@ export default function IntakePage() {
       } else if (acqType === "trade") {
         fallbackCost = market * ((buyPercent + 5) / 100);
       } else if (acqType === "consignment") {
-        // For consignment, cost is the payout to consignor
         const payoutPercent = form.getValues("consignorPayoutPercent") || 70;
         fallbackCost = market * 1.3 * (payoutPercent / 100);
       }
-      // Pull has 0 cost
 
       const fallbackSell = fallbackCost * (1 + sellMarkupPercent / 100);
       const fallbackProfit = fallbackSell - fallbackCost;
@@ -430,14 +394,10 @@ export default function IntakePage() {
   const handleSelectCard = async (card: any) => {
     try {
       setTempSelectedCard(card);
-
-      // Always show all conditions - employee needs to pick based on physical card
       setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
-
-      // Show condition selection modal
       setShowConditionModal(true);
     } catch (error: any) {
-      console.error("❌ Error selecting card:", error);
+      console.error("Error selecting card:", error);
       toast.error("Error loading card details");
     }
   };
@@ -458,7 +418,6 @@ export default function IntakePage() {
       return;
     }
 
-    // Create a card object from manual data
     const manualCard = {
       id: `manual-${Date.now()}`,
       name: manualCardData.name,
@@ -481,7 +440,6 @@ export default function IntakePage() {
     setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
     setShowConditionModal(true);
 
-    // Reset manual form
     setManualCardData({
       name: "",
       setName: "",
@@ -499,19 +457,16 @@ export default function IntakePage() {
     try {
       setSelectedCard(tempSelectedCard);
       setShowConditionModal(false);
-      setStep(2); // Go to offer screen
+      setStep(2);
       form.setValue("cardId", String(tempSelectedCard.id));
       form.setValue("condition", selectedCondition);
 
-      // Always ensure all conditions are available for adjustment on offer screen
       setAvailableConditions(["NM", "LP", "MP", "HP", "DMG"]);
 
-      // Try to find a variant with this specific condition
       let variantWithPrice = tempSelectedCard.variants?.find(
         (v: any) => v.condition === selectedCondition && v.price && v.price > 0,
       );
 
-      // If no exact match, use any variant with a price
       if (!variantWithPrice) {
         variantWithPrice = tempSelectedCard.variants?.find(
           (v: any) => v.price && v.price > 0,
@@ -519,16 +474,13 @@ export default function IntakePage() {
       }
 
       if (variantWithPrice) {
-        // Use the market price from API
         const marketPriceFromAPI = variantWithPrice.price;
         setMarketPrice(marketPriceFromAPI);
         form.setValue("printing", variantWithPrice.printing || "Normal");
         form.setValue("acquisitionType", "buy");
 
-        // Calculate buy price based on selected condition
         await updatePricing(marketPriceFromAPI, "buy", selectedCondition);
       } else {
-        // No price available
         toast.warning("No price available for this card");
         setMarketPrice(0);
         setCostBasis(0);
@@ -536,18 +488,16 @@ export default function IntakePage() {
         form.setValue("printing", "Normal");
       }
     } catch (error: any) {
-      console.error("❌ Error selecting condition:", error);
+      console.error("Error selecting condition:", error);
       toast.error("Error loading pricing");
     }
   };
 
   const handleAcceptOffer = () => {
-    // Move to detailed form
     setStep(3);
   };
 
   const handleDeclineOffer = () => {
-    // Track declined and go back to search
     if (selectedCard) {
       setSessionCards([
         ...sessionCards,
@@ -592,30 +542,23 @@ export default function IntakePage() {
       return;
     }
 
-    // Validate consignment fields
     if (data.acquisitionType === "consignment") {
       if (!selectedCustomerId) {
         toast.error("Please select a customer for consignment");
-        setLoading(false);
         return;
       }
     }
 
     setLoading(true);
     try {
-      // Get customer vendor code if consignment
       let customerVendorCode = "";
       let sku: string;
 
       if (data.acquisitionType === "consignment" && selectedCustomerId) {
         const customer = customers.find((c) => c.id === selectedCustomerId);
         customerVendorCode = customer?.vendorCode || "";
-
-        console.log("🤝 Consignment - Customer:", customer?.name);
-        console.log("🏷️ Customer vendor code:", customerVendorCode);
       }
 
-      // Generate SKU - different format for consignment vs regular items
       sku = generateSKU(
         selectedCard.game || gameFilter,
         String(selectedCard.id),
@@ -623,26 +566,20 @@ export default function IntakePage() {
         customerVendorCode || undefined
       );
 
-      console.log(`✨ Generated SKU: ${sku} for ${data.acquisitionType}`);
-      if (customerVendorCode) {
-        console.log(`   Vendor code: ${customerVendorCode} (included in SKU)`);
-      }
-
       const inventoryData = {
         ...data,
-        sku: sku,  // ✅ ALL items get SKU
+        sku: sku,
         cardName: selectedCard.name,
         setName: selectedCard.setName || "Unknown Set",
         game: selectedCard.game || gameFilter,
         marketPrice,
         sellPrice: suggestedPrice,
-        status: "priced",  // ✅ All items show on /labels/print
+        status: "priced",
         priceSource: apiProvider ? getProviderName(apiProvider) : "Unknown",
         imageUrl: selectedCard.imageUrl,
-        // Consignment fields (only if consignment type)
         ...(data.acquisitionType === "consignment" && {
           customerId: selectedCustomerId,
-          customerVendorCode: customerVendorCode,  // ✅ Vendor code saved as field
+          customerVendorCode: customerVendorCode,
           consignorPayoutPercent: data.consignorPayoutPercent || 60,
           consignorOwed: 0,
           consignorPaid: false,
@@ -650,25 +587,12 @@ export default function IntakePage() {
         }),
       };
 
-      console.log("📦 Inventory data to save:", {
-        sku: inventoryData.sku,
-        status: inventoryData.status,
-        acquisitionType: inventoryData.acquisitionType,
-        customerVendorCode: inventoryData.customerVendorCode,
-      });
-
-      // Save to Firebase
       const docRef = await addDoc(collection(db, "inventory"), {
         ...inventoryData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
 
-      console.log("✅ Item saved to Firebase");
-      console.log("📄 Document ID:", docRef.id);
-      console.log("🏷️ SKU:", sku);
-
-      // Track accepted
       setSessionCards([
         ...sessionCards,
         {
@@ -683,7 +607,6 @@ export default function IntakePage() {
 
       toast.success(`✅ Card added! SKU: ${sku}`);
 
-      // Reset form
       form.reset();
       setSelectedCard(null);
       setSearchQuery("");
@@ -704,7 +627,6 @@ export default function IntakePage() {
     }
   };
 
-  // Calculate session stats
   const acceptedCards = sessionCards.filter((c) => c.accepted);
   const declinedCards = sessionCards.filter((c) => !c.accepted);
   const totalPayout = acceptedCards.reduce((sum, c) => sum + c.buyPrice, 0);
@@ -722,7 +644,7 @@ export default function IntakePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto p-6 max-w-5xl">
-        {/* Header with Session Stats */}
+        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
             <div className="flex-1">
@@ -933,7 +855,6 @@ export default function IntakePage() {
             <div className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full mx-4">
               <h2 className="text-2xl font-bold mb-4">Select Condition</h2>
 
-              {/* Card Preview */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex gap-4">
                 {tempSelectedCard.imageUrl && (
                   <div className="flex-shrink-0">
@@ -963,7 +884,6 @@ export default function IntakePage() {
                 Choose the card's condition to see pricing:
               </p>
 
-              {/* Condition Buttons */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
                 {availableConditions.map((condition) => (
                   <button
@@ -1306,7 +1226,6 @@ export default function IntakePage() {
               </div>
             </div>
 
-            {/* Condition Selector */}
             <div className="mb-6">
               <div className="text-sm text-blue-200 mb-2 text-center">
                 Adjust Condition:
@@ -1391,7 +1310,6 @@ export default function IntakePage() {
                 </div>
               </div>
 
-              {/* Acquisition Type Selector */}
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2">
                   How are you acquiring this card?
@@ -1423,7 +1341,7 @@ export default function IntakePage() {
                 </select>
               </div>
 
-              {/* Consignor Fields */}
+              {/* Consignment Fields */}
               {form.watch("acquisitionType") === "consignment" && (
                 <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-5 mb-4">
                   <h3 className="font-semibold text-purple-900 mb-3 text-lg">
@@ -1431,18 +1349,15 @@ export default function IntakePage() {
                   </h3>
 
                   <div className="space-y-4">
-                    {/* Customer Dropdown */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium">
-                          Select Customer * ({customers.length} loaded)
+                          Select Customer *
                         </label>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.preventDefault();
-                            console.log('🔘 Add Customer button clicked');
-                            console.log('Current customers:', customers);
                             setShowAddCustomerModal(true);
                           }}
                           className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
@@ -1452,14 +1367,11 @@ export default function IntakePage() {
                       </div>
                       <select
                         value={selectedCustomerId}
-                        onChange={(e) => {
-                          console.log('Customer selected:', e.target.value);
-                          setSelectedCustomerId(e.target.value);
-                        }}
+                        onChange={(e) => setSelectedCustomerId(e.target.value)}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white text-lg"
                         required
                       >
-                        <option value="">-- Select Customer ({customers.length} available) --</option>
+                        <option value="">-- Select Customer --</option>
                         {customers.map((customer) => (
                           <option key={customer.id} value={customer.id}>
                             {customer.name}{" "}
@@ -1469,13 +1381,12 @@ export default function IntakePage() {
                         ))}
                       </select>
                       {customers.length === 0 && (
-                        <div className="mt-2 text-sm text-red-600">
-                          ⚠️ No customers found. Click "Add New" to create one.
+                        <div className="mt-2 text-sm text-amber-600">
+                          No customers yet. Click "Add New" to create one.
                         </div>
                       )}
                     </div>
 
-                    {/* Payout Percentage */}
                     <div>
                       <label className="block text-sm font-medium mb-1">
                         Customer Gets (% of sale)
@@ -1494,7 +1405,6 @@ export default function IntakePage() {
                       </div>
                     </div>
 
-                    {/* Payout Breakdown */}
                     <div className="mt-3 p-4 bg-white border border-purple-200 rounded-lg">
                       <div className="text-sm font-semibold text-gray-700 mb-2">
                         When sold for ${suggestedPrice.toFixed(2)}:
