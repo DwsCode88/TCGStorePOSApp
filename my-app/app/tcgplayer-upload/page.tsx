@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { addDoc, collection } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
@@ -34,7 +34,47 @@ export default function TCGPlayerUploadPage() {
   // Default settings
   const [defaultLocation, setDefaultLocation] = useState("A-1");
   const [defaultMarkup, setDefaultMarkup] = useState(30); // 30% markup
-  const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<"buy" | "trade" | "pull">("buy");
+  const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<"buy" | "trade" | "pull" | "consignment">("buy");
+  
+  // Customer state for consignment
+  const [customers, setCustomers] = useState<
+    Array<{
+      id: string;
+      name: string;
+      phone: string;
+      email: string;
+      vendorCode?: string;
+    }>
+  >([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    vendorCode: "",
+  });
+
+  // Load customers on mount
+  useEffect(() => {
+    const loadCustomers = async () => {
+      try {
+        const snapshot = await getDocs(collection(db, "customers"));
+        const customerList = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          name: doc.data().name,
+          phone: doc.data().phone || "",
+          email: doc.data().email || "",
+          vendorCode: doc.data().vendorCode || "",
+        }));
+        setCustomers(customerList);
+      } catch (error) {
+        console.error("Error loading customers:", error);
+      }
+    };
+
+    loadCustomers();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -142,6 +182,51 @@ export default function TCGPlayerUploadPage() {
     return 'NM';
   };
 
+  const handleAddCustomer = async () => {
+    if (!newCustomer.name) {
+      toast.error("Customer name is required");
+      return;
+    }
+
+    if (!newCustomer.phone && !newCustomer.email) {
+      toast.error("Please provide phone or email");
+      return;
+    }
+
+    try {
+      const customerData = {
+        name: newCustomer.name,
+        phone: newCustomer.phone || "",
+        email: newCustomer.email || "",
+        vendorCode: newCustomer.vendorCode || "",
+        createdAt: new Date().toISOString(),
+        totalConsignments: 0,
+        totalOwed: 0,
+      };
+
+      const docRef = await addDoc(collection(db, "customers"), customerData);
+
+      const newCustomerData = {
+        id: docRef.id,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        email: newCustomer.email,
+        vendorCode: newCustomer.vendorCode,
+      };
+
+      setCustomers([...customers, newCustomerData]);
+      setSelectedCustomerId(docRef.id);
+
+      setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
+      setShowAddCustomerModal(false);
+
+      toast.success(`Customer "${newCustomer.name}" added!`);
+    } catch (error: any) {
+      console.error("Error adding customer:", error);
+      toast.error(`Failed to add customer: ${error.message}`);
+    }
+  };
+
   const generateBatchId = () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     return `TCGPLAYER-${timestamp}`;
@@ -163,12 +248,21 @@ export default function TCGPlayerUploadPage() {
       return;
     }
 
+    // Validate customer selection for consignment
+    if (defaultAcquisitionType === "consignment" && !selectedCustomerId) {
+      toast.error("Please select a customer for consignment items");
+      return;
+    }
+
     const confirmed = confirm(
       `Import ${parsedCards.length} cards to inventory?\n\n` +
       `Acquisition: ${defaultAcquisitionType}\n` +
       `Location: ${defaultLocation}\n` +
-      `Markup: ${defaultMarkup}%\n\n` +
-      `All items will be tagged with a batch ID for easy management.`
+      `Markup: ${defaultMarkup}%\n` +
+      (defaultAcquisitionType === "consignment" 
+        ? `Customer: ${customers.find(c => c.id === selectedCustomerId)?.name}\n`
+        : "") +
+      `\nAll items will be tagged with a batch ID for easy management.`
     );
 
     if (!confirmed) return;
@@ -202,7 +296,14 @@ export default function TCGPlayerUploadPage() {
             costBasis = card.marketPrice * 0.70; // 70% for NM
           } else if (defaultAcquisitionType === "trade") {
             costBasis = card.marketPrice * 0.75; // 75% for trades
+          } else if (defaultAcquisitionType === "consignment") {
+            costBasis = 0; // No cost for consignment
           }
+
+          // Get customer info for consignment
+          const customer = defaultAcquisitionType === "consignment" 
+            ? customers.find(c => c.id === selectedCustomerId)
+            : null;
 
           const inventoryData = {
             sku: sku,
@@ -225,6 +326,16 @@ export default function TCGPlayerUploadPage() {
             batchStartTime: startTime,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            // Add consignment fields if applicable
+            ...(defaultAcquisitionType === "consignment" && customer && {
+              customerId: selectedCustomerId,
+              customerName: customer.name,
+              customerVendorCode: customer.vendorCode || "",
+              consignorPayoutPercent: 60, // Default 60%
+              consignorOwed: sellPrice * 0.60, // 60% of sell price
+              consignorPaid: false,
+              consignmentDate: new Date().toISOString(),
+            }),
           };
 
           await addDoc(collection(db, "inventory"), inventoryData);
@@ -409,8 +520,45 @@ export default function TCGPlayerUploadPage() {
                     <option value="buy">💰 Buy</option>
                     <option value="trade">🔄 Trade</option>
                     <option value="pull">📦 Pull</option>
+                    <option value="consignment">🤝 Consignment</option>
                   </select>
                 </div>
+
+                {/* Customer Selection - Only for Consignment */}
+                {defaultAcquisitionType === "consignment" && (
+                  <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-purple-900">
+                        Select Customer *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddCustomerModal(true)}
+                        className="px-3 py-1 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+                      >
+                        ➕ Add New
+                      </button>
+                    </div>
+                    <select
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white"
+                    >
+                      <option value="">-- Select Customer --</option>
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.name} {customer.phone && `(${customer.phone})`}
+                          {customer.vendorCode && ` [${customer.vendorCode}]`}
+                        </option>
+                      ))}
+                    </select>
+                    {!selectedCustomerId && (
+                      <p className="text-xs text-purple-600 mt-1">
+                        Required for consignment imports
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium mb-2">Default Location</label>
@@ -494,6 +642,124 @@ export default function TCGPlayerUploadPage() {
           </div>
         </div>
       </div>
+
+      {/* Add Customer Modal */}
+      {showAddCustomerModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAddCustomerModal(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-2xl font-bold mb-2">➕ Add Customer</h2>
+            <p className="text-gray-600 mb-6 text-sm">
+              Add a new consignment customer
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Name *
+                </label>
+                <input
+                  type="text"
+                  value={newCustomer.name}
+                  onChange={(e) =>
+                    setNewCustomer({ ...newCustomer, name: e.target.value })
+                  }
+                  placeholder="John Doe"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={newCustomer.phone}
+                  onChange={(e) =>
+                    setNewCustomer({ ...newCustomer, phone: e.target.value })
+                  }
+                  placeholder="555-1234"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={newCustomer.email}
+                  onChange={(e) =>
+                    setNewCustomer({ ...newCustomer, email: e.target.value })
+                  }
+                  placeholder="john@example.com"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Vendor Code
+                </label>
+                <input
+                  type="text"
+                  value={newCustomer.vendorCode}
+                  onChange={(e) =>
+                    setNewCustomer({
+                      ...newCustomer,
+                      vendorCode: e.target.value.toUpperCase(),
+                    })
+                  }
+                  placeholder="CUST01 (optional)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 font-mono uppercase"
+                  maxLength={10}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Optional code for this customer's consignments
+                </p>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                * At least phone or email is required
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <Button
+                type="button"
+                onClick={handleAddCustomer}
+                className="flex-1 bg-purple-600 hover:bg-purple-700"
+                size="lg"
+              >
+                Add Customer
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setShowAddCustomerModal(false);
+                  setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
+                }}
+                variant="outline"
+                size="lg"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
