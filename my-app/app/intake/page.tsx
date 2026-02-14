@@ -44,48 +44,37 @@ const GAME_MAPPING: Record<string, string> = {
 
 // SKU Generator - generates proper SKUs for all item types
 const generateSKU = (
-  game?: string, 
-  cardId?: string,
+  cardNumber?: string,
+  tcgplayerId?: string,
   acquisitionType?: string,
   vendorCode?: string
 ): string => {
-  // For consignment with vendor code, use vendor code format
+  // For consignment with vendor code, use vendor code + card identifier
   if (acquisitionType === 'consignment' && vendorCode) {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-    return `${vendorCode}-${timestamp}${random}`;
+    // Use card number if available (e.g., OP01-001)
+    if (cardNumber) {
+      return `${vendorCode}-${cardNumber}`;
+    }
+    // Otherwise use TCGPlayer ID
+    if (tcgplayerId) {
+      return `${vendorCode}-${tcgplayerId}`;
+    }
+    // Fallback to random if neither available
+    const random = Math.floor(100000 + Math.random() * 900000);
+    return `${vendorCode}-${random}`;
   }
   
-  // For all other items (buy/trade/pull), use VT-GAME-ID format
-  const gamePrefixes: Record<string, string> = {
-    'pokemon': 'PKM',
-    'mtg': 'MTG',
-    'onepiece': 'OPC',
-    'one-piece-card-game': 'OPC',
-    'lorcana': 'LOR',
-    'disney-lorcana': 'LOR',
-    'digimon': 'DIG',
-    'digimon-card-game': 'DIG',
-    'yugioh': 'YGO',
-    'flesh-and-blood': 'FAB',
-    'flesh-and-blood-tcg': 'FAB',
-    'star-wars': 'SWU',
-    'star-wars-unlimited': 'SWU',
-    'dragon-ball': 'DBS',
-    'dragon-ball-super-fusion-world': 'DBS',
-  };
-
-  const gamePrefix = game ? (gamePrefixes[game.toLowerCase()] || 'UNK') : 'UNK';
-
-  let uniqueId: string;
-  if (cardId) {
-    const cardIdNumbers = String(cardId).replace(/[^0-9]/g, '');
-    uniqueId = cardIdNumbers || Math.floor(100000 + Math.random() * 900000).toString();
-  } else {
-    uniqueId = Math.floor(100000 + Math.random() * 900000).toString();
+  // For all other items (buy/trade/pull), use card number or TCGPlayer ID
+  if (cardNumber) {
+    return cardNumber;
   }
-
-  return `VT-${gamePrefix}-${uniqueId}`;
+  
+  if (tcgplayerId) {
+    return tcgplayerId;
+  }
+  
+  // Fallback to random
+  return `CARD-${Math.floor(100000 + Math.random() * 900000)}`;
 };
 
 const intakeSchema = z.object({
@@ -560,7 +549,7 @@ export default function IntakePage() {
       }
 
       sku = generateSKU(
-        selectedCard.game || gameFilter,
+        selectedCard.number || "",
         String(selectedCard.id),
         data.acquisitionType,
         customerVendorCode || undefined
