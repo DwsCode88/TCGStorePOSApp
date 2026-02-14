@@ -22,9 +22,9 @@ export default function LabelsPage() {
   const [width, setWidth] = useState(2.0);
   const [height, setHeight] = useState(1.0);
   const [spacing, setSpacing] = useState(0.1);
-  const [offsetX, setOffsetX] = useState(0); // Horizontal offset in inches
-  const [offsetY, setOffsetY] = useState(0); // Vertical offset in inches
-  const [onePerPage, setOnePerPage] = useState(true); // One label per page option - default true for thermal printers
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const [onePerPage, setOnePerPage] = useState(true);
 
   // Simple Y positions (percentage from top)
   const [storeY, setStoreY] = useState(8);
@@ -138,10 +138,16 @@ export default function LabelsPage() {
     try {
       console.log("📦 Loading inventory from Firebase...");
       const snapshot = await getDocs(collection(db, "inventory"));
-      const loadedItems = snapshot.docs.map((doc) => ({
-        ...doc.data(),
-        sku: doc.id,
-      })) as InventoryItem[];
+      
+      // ✅ FIXED: Use SKU from database, not doc ID
+      const loadedItems = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,              // Keep doc ID for updates
+          sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
+        };
+      }) as InventoryItem[];
 
       console.log(`\n📊 INVENTORY STATUS BREAKDOWN:`);
       console.log(`Total items in database: ${loadedItems.length}`);
@@ -156,8 +162,6 @@ export default function LabelsPage() {
         console.log(`  - ${status}: ${count} items`);
       });
 
-      // Filter to only show items that need labels (status = "priced")
-      // Exclude labeled and listed items
       const needsLabels = loadedItems.filter(
         (item) => item.status === "priced",
       );
@@ -224,7 +228,6 @@ export default function LabelsPage() {
       return;
     }
 
-    // Show confirmation with details
     const itemsToLabel = items.filter((item) => selectedItems.has(item.sku));
 
     const totalLabels = itemsToLabel.reduce(
@@ -267,7 +270,6 @@ export default function LabelsPage() {
       return;
     }
 
-    // Expand items by quantity
     const expandedItems: InventoryItem[] = [];
     itemsToLabel.forEach((item) => {
       const qty = item.quantity || 1;
@@ -281,7 +283,6 @@ export default function LabelsPage() {
     try {
       toast.loading(`Generating ${expandedItems.length} labels...`);
 
-      // Generate PDF
       const labelWidthWithMargin = width + spacing;
       const labelHeightWithMargin = height + spacing;
 
@@ -339,7 +340,6 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        // VaultTrove
         if (showStore) {
           const y = labelY + (storeY / 100) * height;
           pdf.setFontSize(storeFontSize);
@@ -347,7 +347,6 @@ export default function LabelsPage() {
           pdf.text("VaultTrove", labelX + leftMargin, y);
         }
 
-        // Card name
         const cardYPos = labelY + (cardY / 100) * height;
         pdf.setFontSize(cardFontSize);
         pdf.setFont("helvetica", "bold");
@@ -357,7 +356,6 @@ export default function LabelsPage() {
           cardYPos,
         );
 
-        // Set name
         if (showSet) {
           const setYPos = labelY + (setY / 100) * height;
           pdf.setFontSize(setFontSize);
@@ -374,7 +372,6 @@ export default function LabelsPage() {
           );
         }
 
-        // Price
         const priceYPos = labelY + (priceY / 100) * height;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
@@ -384,13 +381,13 @@ export default function LabelsPage() {
           priceYPos,
         );
 
-        // Barcode
+        // Barcode - ✅ Using item.sku which now contains correct SKU from database
         const barcodeYPos = labelY + (barcodeY / 100) * height;
         try {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
             bcid: "code128",
-            text: item.sku,
+            text: item.sku,  // ✅ Correct SKU from database
             scale: 3,
             height: 8,
             includetext: false,
@@ -408,11 +405,11 @@ export default function LabelsPage() {
           console.error("Barcode error:", e);
         }
 
-        // SKU
+        // SKU - ✅ Using item.sku which now contains correct SKU from database
         const skuYPos = labelY + (skuY / 100) * height;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" });
+        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" });  // ✅ Correct SKU
       }
 
       const pdfBlob = pdf.output("blob");
@@ -425,10 +422,10 @@ export default function LabelsPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      // Mark items as labeled
+      // ✅ FIXED: Use item.id (document ID) for updateDoc, not item.sku
       await Promise.all(
         itemsToLabel.map((item) =>
-          updateDoc(doc(db, "inventory", item.sku), {
+          updateDoc(doc(db, "inventory", item.id || item.sku), {  // ✅ Use doc ID
             status: "labeled",
             updatedAt: new Date(),
           }),
@@ -440,7 +437,6 @@ export default function LabelsPage() {
         `Generated ${expandedItems.length} labels! Items removed from queue.`,
       );
 
-      // Reload inventory to remove labeled items from list
       await loadInventory();
       setSelectedItems(new Set());
     } catch (error: any) {
@@ -469,7 +465,6 @@ export default function LabelsPage() {
           Showing only items that need labels (status: "priced")
         </p>
 
-        {/* All Caught Up Message */}
         {items.length === 0 && (
           <div className="bg-white rounded-lg shadow p-12 text-center mb-6">
             <div className="text-6xl mb-4">✅</div>
@@ -488,7 +483,6 @@ export default function LabelsPage() {
         {items.length > 0 && (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              {/* Position Controls */}
               <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold">Label Layout</h2>
@@ -507,7 +501,6 @@ export default function LabelsPage() {
                   Already labeled and listed items are automatically hidden.
                 </div>
 
-                {/* Selected items preview - keeping all your existing UI */}
                 {selectedItems.size > 0 && (
                   <div className="bg-green-50 border-2 border-green-400 rounded p-4 mb-4">
                     <div className="font-bold text-green-900 mb-2 text-lg">
@@ -554,9 +547,7 @@ export default function LabelsPage() {
                   </div>
                 )}
 
-                {/* All your existing layout controls */}
                 <div className="space-y-4">
-                  {/* Store */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <input
                       type="checkbox"
@@ -594,7 +585,6 @@ export default function LabelsPage() {
                     </div>
                   </div>
 
-                  {/* Card */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <div className="w-5"></div>
                     <div className="flex-1 grid grid-cols-2 gap-3">
@@ -627,7 +617,6 @@ export default function LabelsPage() {
                     </div>
                   </div>
 
-                  {/* Set */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <input
                       type="checkbox"
@@ -665,7 +654,6 @@ export default function LabelsPage() {
                     </div>
                   </div>
 
-                  {/* Price */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <div className="w-5"></div>
                     <div className="flex-1 grid grid-cols-2 gap-3">
@@ -698,7 +686,6 @@ export default function LabelsPage() {
                     </div>
                   </div>
 
-                  {/* Barcode */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <div className="w-5"></div>
                     <div className="flex-1">
@@ -716,7 +703,6 @@ export default function LabelsPage() {
                     </div>
                   </div>
 
-                  {/* SKU */}
                   <div className="flex items-center gap-4 p-3 border rounded">
                     <div className="w-5"></div>
                     <div className="flex-1 grid grid-cols-2 gap-3">
@@ -751,9 +737,7 @@ export default function LabelsPage() {
                 </div>
               </div>
 
-              {/* Settings & Actions */}
               <div className="space-y-4">
-                {/* Size */}
                 <div className="bg-white rounded-lg shadow p-4">
                   <h3 className="font-semibold mb-3">Label Size</h3>
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -875,7 +859,6 @@ export default function LabelsPage() {
                   </div>
                 </div>
 
-                {/* Stats */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="text-sm font-medium text-blue-900">
                     {selectedItems.size} selected
@@ -888,7 +871,6 @@ export default function LabelsPage() {
                   </div>
                 </div>
 
-                {/* Actions */}
                 <div className="space-y-2">
                   <Button
                     onClick={toggleAll}
@@ -915,7 +897,6 @@ export default function LabelsPage() {
               </div>
             </div>
 
-            {/* Items Grid */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-xl font-semibold mb-4">
                 Items Needing Labels ({items.length})
