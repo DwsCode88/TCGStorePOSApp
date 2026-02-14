@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { addDoc, collection } from "firebase/firestore";
+import { addDoc, collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { Upload, X, Check, AlertCircle } from "lucide-react";
@@ -20,6 +20,14 @@ interface ParsedCard {
   rarity?: string;
 }
 
+interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  vendorCode?: string;
+}
+
 export const dynamic = "force-dynamic";
 
 export default function TCGPlayerUploadPage() {
@@ -33,19 +41,11 @@ export default function TCGPlayerUploadPage() {
   
   // Default settings
   const [defaultLocation, setDefaultLocation] = useState("A-1");
-  const [defaultMarkup, setDefaultMarkup] = useState(30); // 30% markup
+  const [defaultMarkup, setDefaultMarkup] = useState(30);
   const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<"buy" | "trade" | "pull" | "consignment">("buy");
   
-  // Customer state for consignment
-  const [customers, setCustomers] = useState<
-    Array<{
-      id: string;
-      name: string;
-      phone: string;
-      email: string;
-      vendorCode?: string;
-    }>
-  >([]);
+  // Customer management
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
@@ -55,26 +55,63 @@ export default function TCGPlayerUploadPage() {
     vendorCode: "",
   });
 
-  // Load customers on mount
   useEffect(() => {
-    const loadCustomers = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, "customers"));
-        const customerList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          name: doc.data().name,
-          phone: doc.data().phone || "",
-          email: doc.data().email || "",
-          vendorCode: doc.data().vendorCode || "",
-        }));
-        setCustomers(customerList);
-      } catch (error) {
-        console.error("Error loading customers:", error);
-      }
-    };
-
     loadCustomers();
   }, []);
+
+  const loadCustomers = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "customers"));
+      const customerList = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        name: doc.data().name,
+        phone: doc.data().phone || "",
+        email: doc.data().email || "",
+        vendorCode: doc.data().vendorCode || "",
+      }));
+      setCustomers(customerList);
+    } catch (error) {
+      console.error("Error loading customers:", error);
+    }
+  };
+
+  const handleAddCustomer = async () => {
+    if (!newCustomer.name) {
+      toast.error("Customer name is required");
+      return;
+    }
+    if (!newCustomer.phone && !newCustomer.email) {
+      toast.error("Please provide phone or email");
+      return;
+    }
+
+    try {
+      const customerData = {
+        name: newCustomer.name,
+        phone: newCustomer.phone || "",
+        email: newCustomer.email || "",
+        vendorCode: newCustomer.vendorCode || "",
+        createdAt: new Date().toISOString(),
+        totalConsignments: 0,
+        totalOwed: 0,
+      };
+
+      const docRef = await addDoc(collection(db, "customers"), customerData);
+      const newCust: Customer = {
+        id: docRef.id,
+        ...customerData,
+      };
+
+      setCustomers([...customers, newCust]);
+      setSelectedCustomerId(docRef.id);
+      setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
+      setShowAddCustomerModal(false);
+      toast.success(`Customer "${newCustomer.name}" added!`);
+    } catch (error: any) {
+      console.error("Error adding customer:", error);
+      toast.error(`Failed to add customer: ${error.message}`);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -105,10 +142,8 @@ export default function TCGPlayerUploadPage() {
         return;
       }
 
-      // Parse header
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
       
-      // Common TCGPlayer CSV headers
       const productNameIndex = headers.findIndex(h => 
         h.toLowerCase().includes('product') || h.toLowerCase().includes('name')
       );
@@ -136,11 +171,10 @@ export default function TCGPlayerUploadPage() {
 
       const cards: ParsedCard[] = [];
 
-      // Parse data rows
       for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
         
-        if (values.length < 3) continue; // Skip invalid rows
+        if (values.length < 3) continue;
 
         const card: ParsedCard = {
           productName: productNameIndex >= 0 ? values[productNameIndex] : `Card ${i}`,
@@ -182,51 +216,6 @@ export default function TCGPlayerUploadPage() {
     return 'NM';
   };
 
-  const handleAddCustomer = async () => {
-    if (!newCustomer.name) {
-      toast.error("Customer name is required");
-      return;
-    }
-
-    if (!newCustomer.phone && !newCustomer.email) {
-      toast.error("Please provide phone or email");
-      return;
-    }
-
-    try {
-      const customerData = {
-        name: newCustomer.name,
-        phone: newCustomer.phone || "",
-        email: newCustomer.email || "",
-        vendorCode: newCustomer.vendorCode || "",
-        createdAt: new Date().toISOString(),
-        totalConsignments: 0,
-        totalOwed: 0,
-      };
-
-      const docRef = await addDoc(collection(db, "customers"), customerData);
-
-      const newCustomerData = {
-        id: docRef.id,
-        name: newCustomer.name,
-        phone: newCustomer.phone,
-        email: newCustomer.email,
-        vendorCode: newCustomer.vendorCode,
-      };
-
-      setCustomers([...customers, newCustomerData]);
-      setSelectedCustomerId(docRef.id);
-
-      setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
-      setShowAddCustomerModal(false);
-
-      toast.success(`Customer "${newCustomer.name}" added!`);
-    } catch (error: any) {
-      console.error("Error adding customer:", error);
-      toast.error(`Failed to add customer: ${error.message}`);
-    }
-  };
-
   const generateBatchId = () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     return `TCGPLAYER-${timestamp}`;
@@ -236,8 +225,6 @@ export default function TCGPlayerUploadPage() {
     if (card.cardNumber) {
       return card.cardNumber;
     }
-    
-    // Fallback to random SKU
     const random = Math.floor(100000 + Math.random() * 900000);
     return `CARD-${random}`;
   };
@@ -248,26 +235,26 @@ export default function TCGPlayerUploadPage() {
       return;
     }
 
-    // Validate customer selection for consignment
     if (defaultAcquisitionType === "consignment" && !selectedCustomerId) {
       toast.error("Please select a customer for consignment items");
       return;
     }
 
+    const customer = customers.find(c => c.id === selectedCustomerId);
+    
     const confirmed = confirm(
       `Import ${parsedCards.length} cards to inventory?\n\n` +
       `Acquisition: ${defaultAcquisitionType}\n` +
       `Location: ${defaultLocation}\n` +
       `Markup: ${defaultMarkup}%\n` +
-      (defaultAcquisitionType === "consignment" 
-        ? `Customer: ${customers.find(c => c.id === selectedCustomerId)?.name}\n`
+      (defaultAcquisitionType === "consignment" && customer
+        ? `Customer: ${customer.name}\n`
         : "") +
       `\nAll items will be tagged with a batch ID for easy management.`
     );
 
     if (!confirmed) return;
 
-    // Generate batch ID
     const batchId = generateBatchId();
     const startTime = new Date().toISOString();
     setCurrentBatchId(batchId);
@@ -290,22 +277,14 @@ export default function TCGPlayerUploadPage() {
           const sku = generateSKU(card);
           const sellPrice = card.marketPrice * (1 + defaultMarkup / 100);
           
-          // Calculate cost basis based on acquisition type
           let costBasis = 0;
           if (defaultAcquisitionType === "buy") {
-            costBasis = card.marketPrice * 0.70; // 70% for NM
+            costBasis = card.marketPrice * 0.70;
           } else if (defaultAcquisitionType === "trade") {
-            costBasis = card.marketPrice * 0.75; // 75% for trades
-          } else if (defaultAcquisitionType === "consignment") {
-            costBasis = 0; // No cost for consignment
+            costBasis = card.marketPrice * 0.75;
           }
 
-          // Get customer info for consignment
-          const customer = defaultAcquisitionType === "consignment" 
-            ? customers.find(c => c.id === selectedCustomerId)
-            : null;
-
-          const inventoryData = {
+          const inventoryData: any = {
             sku: sku,
             cardName: card.productName,
             setName: card.setName,
@@ -322,21 +301,21 @@ export default function TCGPlayerUploadPage() {
             status: "priced",
             priceSource: "TCGPlayer CSV Import",
             notes: `Imported from TCGPlayer CSV on ${new Date().toLocaleDateString()}`,
-            batchId: batchId,  // ✅ Batch tracking
+            batchId: batchId,
             batchStartTime: startTime,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            // Add consignment fields if applicable
-            ...(defaultAcquisitionType === "consignment" && customer && {
-              customerId: selectedCustomerId,
-              customerName: customer.name,
-              customerVendorCode: customer.vendorCode || "",
-              consignorPayoutPercent: 60, // Default 60%
-              consignorOwed: sellPrice * 0.60, // 60% of sell price
-              consignorPaid: false,
-              consignmentDate: new Date().toISOString(),
-            }),
           };
+
+          if (defaultAcquisitionType === "consignment" && customer) {
+            inventoryData.customerId = selectedCustomerId;
+            inventoryData.customerName = customer.name;
+            inventoryData.customerVendorCode = customer.vendorCode || "";
+            inventoryData.consignorPayoutPercent = 60;
+            inventoryData.consignorOwed = sellPrice * 0.60;
+            inventoryData.consignorPaid = false;
+            inventoryData.consignmentDate = new Date().toISOString();
+          }
 
           await addDoc(collection(db, "inventory"), inventoryData);
           successCount++;
@@ -359,7 +338,6 @@ export default function TCGPlayerUploadPage() {
         toast.error("Import failed. Check console for errors.");
       }
 
-      // Reset form
       setFile(null);
       setParsedCards([]);
       setImportProgress(0);
@@ -374,7 +352,6 @@ export default function TCGPlayerUploadPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-5xl mx-auto">
-        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-4 mb-2">
             <h1 className="text-4xl font-bold">TCGPlayer Import</h1>
@@ -401,23 +378,20 @@ export default function TCGPlayerUploadPage() {
           )}
         </div>
 
-        {/* Instructions */}
         <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6 mb-6">
           <h2 className="text-lg font-semibold text-blue-900 mb-3">📋 How to Use</h2>
           <ol className="space-y-2 text-sm text-blue-800">
             <li><strong>1.</strong> Export your inventory as CSV from TCGPlayer</li>
             <li><strong>2.</strong> Upload the CSV file below</li>
             <li><strong>3.</strong> Review the parsed cards</li>
-            <li><strong>4.</strong> Set default location and markup</li>
-            <li><strong>5.</strong> Click "Import to Inventory"</li>
-            <li><strong>6.</strong> All items will be tagged with a batch ID - you can delete the entire batch later if needed</li>
+            <li><strong>4.</strong> Set acquisition type, location and markup</li>
+            <li><strong>5.</strong> For consignment: select customer</li>
+            <li><strong>6.</strong> Click "Import to Inventory"</li>
           </ol>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Upload */}
           <div className="lg:col-span-2 space-y-6">
-            {/* File Upload */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-xl font-semibold mb-4">1. Upload CSV</h2>
               
@@ -466,7 +440,6 @@ export default function TCGPlayerUploadPage() {
               )}
             </div>
 
-            {/* Preview */}
             {parsedCards.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-xl font-semibold mb-4">
@@ -503,9 +476,7 @@ export default function TCGPlayerUploadPage() {
             )}
           </div>
 
-          {/* Right Column - Settings */}
           <div className="space-y-4">
-            {/* Settings */}
             <div className="bg-white rounded-lg shadow p-4 sticky top-6">
               <h3 className="font-semibold mb-4">Import Settings</h3>
 
@@ -524,7 +495,6 @@ export default function TCGPlayerUploadPage() {
                   </select>
                 </div>
 
-                {/* Customer Selection - Only for Consignment */}
                 {defaultAcquisitionType === "consignment" && (
                   <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
@@ -630,7 +600,6 @@ export default function TCGPlayerUploadPage() {
               )}
             </div>
 
-            {/* Help */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -643,7 +612,6 @@ export default function TCGPlayerUploadPage() {
         </div>
       </div>
 
-      {/* Add Customer Modal */}
       {showAddCustomerModal && (
         <div
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
