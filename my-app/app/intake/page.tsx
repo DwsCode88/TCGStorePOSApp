@@ -6,8 +6,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import {
-
-
   searchCards,
   setAPIProvider,
   getAvailableProviders,
@@ -42,6 +40,52 @@ const GAME_MAPPING: Record<string, string> = {
   "flesh-and-blood": "flesh-and-blood-tcg",
   "star-wars": "star-wars-unlimited",
   "dragon-ball": "dragon-ball-super-fusion-world",
+};
+
+// SKU Generator - generates proper SKUs for all item types
+const generateSKU = (
+  game?: string, 
+  cardId?: string,
+  acquisitionType?: string,
+  vendorCode?: string
+): string => {
+  // For consignment with vendor code, use vendor code format
+  if (acquisitionType === 'consignment' && vendorCode) {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `${vendorCode}-${timestamp}${random}`;
+  }
+  
+  // For all other items (buy/trade/pull), use VT-GAME-ID format
+  const gamePrefixes: Record<string, string> = {
+    'pokemon': 'PKM',
+    'mtg': 'MTG',
+    'onepiece': 'OPC',
+    'one-piece-card-game': 'OPC',
+    'lorcana': 'LOR',
+    'disney-lorcana': 'LOR',
+    'digimon': 'DIG',
+    'digimon-card-game': 'DIG',
+    'yugioh': 'YGO',
+    'flesh-and-blood': 'FAB',
+    'flesh-and-blood-tcg': 'FAB',
+    'star-wars': 'SWU',
+    'star-wars-unlimited': 'SWU',
+    'dragon-ball': 'DBS',
+    'dragon-ball-super-fusion-world': 'DBS',
+  };
+
+  const gamePrefix = game ? (gamePrefixes[game.toLowerCase()] || 'UNK') : 'UNK';
+
+  let uniqueId: string;
+  if (cardId) {
+    const cardIdNumbers = String(cardId).replace(/[^0-9]/g, '');
+    uniqueId = cardIdNumbers || Math.floor(100000 + Math.random() * 900000).toString();
+  } else {
+    uniqueId = Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  return `VT-${gamePrefix}-${uniqueId}`;
 };
 
 const intakeSchema = z.object({
@@ -128,6 +172,8 @@ export default function IntakePage() {
 
   // Load settings and customers from localStorage/Firebase on mount
   useEffect(() => {
+    console.log('🔄 useEffect running - loading customers');
+    
     const savedBuyPercents = localStorage.getItem("conditionBuyPercents");
     const savedMarkup = localStorage.getItem("sellMarkupPercent");
 
@@ -141,22 +187,40 @@ export default function IntakePage() {
     // Load customers from Firebase
     const loadCustomers = async () => {
       try {
+        console.log('🔍 Loading customers from Firebase...');
         const snapshot = await getDocs(collection(db, "customers"));
-        const customerList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          name: doc.data().name,
-          phone: doc.data().phone || "",
-          email: doc.data().email || "",
-          vendorCode: doc.data().vendorCode || "",
-        }));
+        console.log(`📊 Raw snapshot size: ${snapshot.size}`);
+        console.log(`📊 Docs length: ${snapshot.docs.length}`);
+        
+        const customerList = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          console.log(`👤 Customer ${doc.id}:`, data);
+          return {
+            id: doc.id,
+            name: data.name,
+            phone: data.phone || "",
+            email: data.email || "",
+            vendorCode: data.vendorCode || "",
+          };
+        });
+        
+        console.log('✅ Customer list created:', customerList);
+        console.log(`✅ Setting ${customerList.length} customers to state`);
         setCustomers(customerList);
+        console.log('✅ setCustomers called');
+        
       } catch (error) {
-        console.error("Error loading customers:", error);
+        console.error("❌ Error loading customers:", error);
       }
     };
 
     loadCustomers();
   }, []);
+
+  // Monitor customer state changes
+  useEffect(() => {
+    console.log('👥 Customers state changed:', customers.length, customers);
+  }, [customers]);
 
   const form = useForm<IntakeFormData>({
     resolver: zodResolver(intakeSchema),
@@ -220,16 +284,13 @@ export default function IntakePage() {
         totalOwed: 0,
       };
 
-      const savePromise = addDoc(collection(db, "customers"), customerData);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () =>
-            reject(new Error("Customer save timeout - check Firestore rules")),
-          10000,
-        ),
-      );
+      console.log('💾 Saving new customer:', customerData);
 
-      const docRef = (await Promise.race([savePromise, timeoutPromise])) as any;
+     const docRef = await addDoc(collection(db, "customers"), customerData);
+
+    
+
+      console.log('✅ Customer saved with ID:', docRef.id);
 
       // Add to local state
       const newCustomerData = {
@@ -237,8 +298,10 @@ export default function IntakePage() {
         name: newCustomer.name,
         phone: newCustomer.phone,
         email: newCustomer.email,
+        vendorCode: newCustomer.vendorCode,
       };
 
+      console.log('📝 Adding to local state:', newCustomerData);
       setCustomers([...customers, newCustomerData]);
       setSelectedCustomerId(docRef.id);
 
@@ -542,7 +605,7 @@ export default function IntakePage() {
     try {
       // Get customer vendor code if consignment
       let customerVendorCode = "";
-      let customSKU = "";
+      let sku: string;
 
       if (data.acquisitionType === "consignment" && selectedCustomerId) {
         const customer = customers.find((c) => c.id === selectedCustomerId);
@@ -550,34 +613,36 @@ export default function IntakePage() {
 
         console.log("🤝 Consignment - Customer:", customer?.name);
         console.log("🏷️ Customer vendor code:", customerVendorCode);
+      }
 
-        // Generate custom SKU for consignment with vendor code
-        const timestamp = Date.now().toString(36).toUpperCase();
-        const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+      // Generate SKU - different format for consignment vs regular items
+      sku = generateSKU(
+        selectedCard.game || gameFilter,
+        String(selectedCard.id),
+        data.acquisitionType,
+        customerVendorCode || undefined
+      );
 
-        if (customerVendorCode) {
-          customSKU = `${customerVendorCode}-${timestamp}${random}`;
-          console.log("✨ Generated SKU:", customSKU);
-        } else {
-          console.log("⚠️ No vendor code for customer");
-        }
+      console.log(`✨ Generated SKU: ${sku} for ${data.acquisitionType}`);
+      if (customerVendorCode) {
+        console.log(`   Vendor code: ${customerVendorCode} (included in SKU)`);
       }
 
       const inventoryData = {
         ...data,
+        sku: sku,  // ✅ ALL items get SKU
         cardName: selectedCard.name,
         setName: selectedCard.setName || "Unknown Set",
         game: selectedCard.game || gameFilter,
         marketPrice,
         sellPrice: suggestedPrice,
-        status: "priced",
+        status: "priced",  // ✅ All items show on /labels/print
         priceSource: apiProvider ? getProviderName(apiProvider) : "Unknown",
         imageUrl: selectedCard.imageUrl,
-        ...(customSKU && { sku: customSKU }),
         // Consignment fields (only if consignment type)
         ...(data.acquisitionType === "consignment" && {
           customerId: selectedCustomerId,
-          customerVendorCode: customerVendorCode,
+          customerVendorCode: customerVendorCode,  // ✅ Vendor code saved as field
           consignorPayoutPercent: data.consignorPayoutPercent || 60,
           consignorOwed: 0,
           consignorPaid: false,
@@ -587,69 +652,21 @@ export default function IntakePage() {
 
       console.log("📦 Inventory data to save:", {
         sku: inventoryData.sku,
+        status: inventoryData.status,
         acquisitionType: inventoryData.acquisitionType,
         customerVendorCode: inventoryData.customerVendorCode,
       });
 
-      let sku;
+      // Save to Firebase
+      const docRef = await addDoc(collection(db, "inventory"), {
+        ...inventoryData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
 
-      // For consignment items with custom SKU, save directly to Firebase
-      // Use the custom SKU as the document ID
-      if (data.acquisitionType === "consignment" && customSKU) {
-        console.log(
-          "💾 Saving consignment with custom SKU as document ID:",
-          customSKU,
-        );
-        console.log("📦 Full inventory data before save:", inventoryData);
-
-        // Use setDoc with custom document ID instead of addDoc
-        await setDoc(doc(db, "inventory", customSKU), {
-          ...inventoryData,
-          sku: customSKU, // Also save as field for reference
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-
-        sku = customSKU;
-        console.log("✅ Consignment saved to Firebase");
-        console.log("📄 Document ID (same as SKU):", sku);
-
-        // Verify what was actually saved
-        const savedDoc = await getDoc(doc(db, "inventory", customSKU));
-        const savedData = savedDoc.data();
-        console.log("🔍 Verification - Document ID:", savedDoc.id);
-        console.log("🔍 Verification - SKU field:", savedData?.sku);
-        console.log(
-          "🔍 Verification - Customer vendor code:",
-          savedData?.customerVendorCode,
-        );
-
-        if (savedDoc.id === customSKU) {
-          console.log("✅ SUCCESS! Document ID matches custom SKU!");
-        }
-      } else {
-        // For non-consignment items, use the normal flow
-        try {
-          const savePromise = createInventoryItem(inventoryData as any);
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Save timeout - trying direct save")),
-              10000,
-            ),
-          );
-
-          sku = await Promise.race([savePromise, timeoutPromise]);
-        } catch (createError: any) {
-          // Fallback: Save directly to Firebase
-          const docRef = await addDoc(collection(db, "inventory"), {
-            ...inventoryData,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-
-          sku = docRef.id;
-        }
-      }
+      console.log("✅ Item saved to Firebase");
+      console.log("📄 Document ID:", docRef.id);
+      console.log("🏷️ SKU:", sku);
 
       // Track accepted
       setSessionCards([
@@ -664,9 +681,7 @@ export default function IntakePage() {
         },
       ]);
 
-      // Show the correct SKU - custom SKU if consignment, otherwise doc ID
-      const displaySKU = customSKU || sku;
-      toast.success(`✅ Card added! SKU: ${displaySKU}`);
+      toast.success(`✅ Card added! SKU: ${sku}`);
 
       // Reset form
       form.reset();
@@ -1420,12 +1435,14 @@ export default function IntakePage() {
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium">
-                          Select Customer *
+                          Select Customer * ({customers.length} loaded)
                         </label>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.preventDefault();
+                            console.log('🔘 Add Customer button clicked');
+                            console.log('Current customers:', customers);
                             setShowAddCustomerModal(true);
                           }}
                           className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
@@ -1435,18 +1452,27 @@ export default function IntakePage() {
                       </div>
                       <select
                         value={selectedCustomerId}
-                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        onChange={(e) => {
+                          console.log('Customer selected:', e.target.value);
+                          setSelectedCustomerId(e.target.value);
+                        }}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-white text-lg"
                         required
                       >
-                        <option value="">-- Select Customer --</option>
+                        <option value="">-- Select Customer ({customers.length} available) --</option>
                         {customers.map((customer) => (
                           <option key={customer.id} value={customer.id}>
                             {customer.name}{" "}
                             {customer.phone && `(${customer.phone})`}
+                            {customer.vendorCode && ` [${customer.vendorCode}]`}
                           </option>
                         ))}
                       </select>
+                      {customers.length === 0 && (
+                        <div className="mt-2 text-sm text-red-600">
+                          ⚠️ No customers found. Click "Add New" to create one.
+                        </div>
+                      )}
                     </div>
 
                     {/* Payout Percentage */}
