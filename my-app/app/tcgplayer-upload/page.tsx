@@ -225,10 +225,21 @@ export default function TCGPlayerUploadPage() {
     return `TCGPLAYER-${timestamp}`;
   };
 
-  const generateSKU = (card: ParsedCard): string => {
+  const generateSKU = (card: ParsedCard, vendorCode?: string): string => {
+    // For consignment with vendor code
+    if (vendorCode && card.cardNumber) {
+      return `${vendorCode}-${card.cardNumber}`;
+    }
+    if (vendorCode) {
+      const random = Math.floor(100000 + Math.random() * 900000);
+      return `${vendorCode}-${random}`;
+    }
+    
+    // For non-consignment or no vendor code
     if (card.cardNumber) {
       return card.cardNumber;
     }
+    
     const random = Math.floor(100000 + Math.random() * 900000);
     return `CARD-${random}`;
   };
@@ -247,9 +258,15 @@ export default function TCGPlayerUploadPage() {
       }));
 
       const foundDuplicates: ParsedCard[] = [];
+      
+      // Get customer vendor code ONLY if consignment
+      const customer = defaultAcquisitionType === "consignment"
+        ? customers.find(c => c.id === selectedCustomerId)
+        : null;
+      const vendorCode = defaultAcquisitionType === "consignment" ? (customer?.vendorCode || "") : "";
 
       for (const card of parsedCards) {
-        const sku = generateSKU(card);
+        const sku = generateSKU(card, vendorCode);
         
         // Check if SKU exists
         const skuExists = existingCards.some(existing => existing.sku === sku);
@@ -348,7 +365,9 @@ export default function TCGPlayerUploadPage() {
         const card = cardsToImport[i];
         
         try {
-          const sku = generateSKU(card);
+          // Use vendor code ONLY for consignment
+          const vendorCode = defaultAcquisitionType === "consignment" ? (customer?.vendorCode || "") : "";
+          const sku = generateSKU(card, vendorCode);
           const sellPrice = card.marketPrice * (1 + defaultMarkup / 100);
           
           let costBasis = 0;
