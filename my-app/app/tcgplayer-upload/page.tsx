@@ -39,6 +39,10 @@ export default function TCGPlayerUploadPage() {
   const [currentBatchId, setCurrentBatchId] = useState<string>("");
   const [batchStartTime, setBatchStartTime] = useState<string>("");
   
+  // Duplicate checking
+  const [duplicates, setDuplicates] = useState<ParsedCard[]>([]);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  
   // Default settings
   const [defaultLocation, setDefaultLocation] = useState("A-1");
   const [defaultMarkup, setDefaultMarkup] = useState(30);
@@ -229,6 +233,54 @@ export default function TCGPlayerUploadPage() {
     return `CARD-${random}`;
   };
 
+  const checkForDuplicates = async () => {
+    if (parsedCards.length === 0) return;
+
+    try {
+      setLoading(true);
+      const inventorySnapshot = await getDocs(collection(db, "inventory"));
+      const existingCards = inventorySnapshot.docs.map(doc => ({
+        sku: doc.data().sku,
+        cardName: doc.data().cardName,
+        setName: doc.data().setName,
+        cardNumber: doc.data().cardNumber,
+      }));
+
+      const foundDuplicates: ParsedCard[] = [];
+
+      for (const card of parsedCards) {
+        const sku = generateSKU(card);
+        
+        // Check if SKU exists
+        const skuExists = existingCards.some(existing => existing.sku === sku);
+        
+        // Check if card name + set exists
+        const cardExists = existingCards.some(existing => 
+          existing.cardName?.toLowerCase() === card.productName?.toLowerCase() &&
+          existing.setName?.toLowerCase() === card.setName?.toLowerCase()
+        );
+
+        if (skuExists || cardExists) {
+          foundDuplicates.push(card);
+        }
+      }
+
+      setDuplicates(foundDuplicates);
+      
+      if (foundDuplicates.length > 0) {
+        setShowDuplicateModal(true);
+      } else {
+        // No duplicates, proceed with import
+        proceedWithImport();
+      }
+    } catch (error: any) {
+      console.error("Error checking duplicates:", error);
+      toast.error("Error checking for duplicates");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleImport = async () => {
     if (parsedCards.length === 0) {
       toast.error("No cards to import");
@@ -240,13 +292,32 @@ export default function TCGPlayerUploadPage() {
       return;
     }
 
+    // Check for duplicates first
+    await checkForDuplicates();
+  };
+
+  const proceedWithImport = async (skipDuplicates: boolean = false) => {
+    setShowDuplicateModal(false);
+
+    const cardsToImport = skipDuplicates 
+      ? parsedCards.filter(card => !duplicates.some(dup => 
+          dup.productName === card.productName && dup.setName === card.setName
+        ))
+      : parsedCards;
+
+    if (cardsToImport.length === 0) {
+      toast.error("No cards to import after removing duplicates");
+      return;
+    }
+
     const customer = customers.find(c => c.id === selectedCustomerId);
     
     const confirmed = confirm(
-      `Import ${parsedCards.length} cards to inventory?\n\n` +
+      `Import ${cardsToImport.length} cards to inventory?\n\n` +
       `Acquisition: ${defaultAcquisitionType}\n` +
       `Location: ${defaultLocation}\n` +
       `Markup: ${defaultMarkup}%\n` +
+      (skipDuplicates ? `Skipping ${duplicates.length} duplicates\n` : '') +
       (defaultAcquisitionType === "consignment" && customer
         ? `Customer: ${customer.name}\n`
         : "") +
@@ -265,13 +336,16 @@ export default function TCGPlayerUploadPage() {
 
     try {
       console.log(`📦 Starting TCGPlayer import batch: ${batchId}`);
-      console.log(`Total items: ${parsedCards.length}`);
+      console.log(`Total items: ${cardsToImport.length}`);
+      if (skipDuplicates && duplicates.length > 0) {
+        console.log(`Skipping ${duplicates.length} duplicates`);
+      }
 
       let successCount = 0;
       let errorCount = 0;
 
-      for (let i = 0; i < parsedCards.length; i++) {
-        const card = parsedCards[i];
+      for (let i = 0; i < cardsToImport.length; i++) {
+        const card = cardsToImport[i];
         
         try {
           const sku = generateSKU(card);
@@ -320,7 +394,7 @@ export default function TCGPlayerUploadPage() {
           await addDoc(collection(db, "inventory"), inventoryData);
           successCount++;
           
-          setImportProgress(Math.round(((i + 1) / parsedCards.length) * 100));
+          setImportProgress(Math.round(((i + 1) / cardsToImport.length) * 100));
         } catch (error: any) {
           console.error(`Error importing card ${i + 1}:`, error);
           errorCount++;
@@ -579,11 +653,11 @@ export default function TCGPlayerUploadPage() {
 
                   <Button
                     onClick={handleImport}
-                    disabled={importing}
+                    disabled={importing || loading}
                     className="w-full bg-green-600 hover:bg-green-700"
                     size="lg"
                   >
-                    {importing ? `Importing... ${importProgress}%` : "Import to Inventory"}
+                    {importing ? `Importing... ${importProgress}%` : loading ? "Checking..." : "Check & Import to Inventory"}
                   </Button>
 
                   {importing && (
@@ -611,6 +685,77 @@ export default function TCGPlayerUploadPage() {
           </div>
         </div>
       </div>
+
+      {/* Duplicate Warning Modal */}
+      {showDuplicateModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowDuplicateModal(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-2xl font-bold mb-2 text-orange-600">
+              ⚠️ Duplicate Cards Found
+            </h2>
+            <p className="text-gray-600 mb-6">
+              {duplicates.length} card(s) already exist in your inventory. What would you like to do?
+            </p>
+
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6 max-h-64 overflow-y-auto">
+              <h3 className="font-semibold text-orange-900 mb-3">Duplicate Cards:</h3>
+              <div className="space-y-2">
+                {duplicates.map((card, idx) => (
+                  <div key={idx} className="bg-white rounded p-3 border border-orange-200">
+                    <div className="font-medium text-sm">{card.productName}</div>
+                    <div className="text-xs text-gray-600">
+                      {card.setName} • {card.condition}
+                      {card.cardNumber && ` • #${card.cardNumber}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              <Button
+                type="button"
+                onClick={() => proceedWithImport(true)}
+                className="bg-blue-600 hover:bg-blue-700"
+                size="lg"
+              >
+                Skip Duplicates & Import {parsedCards.length - duplicates.length} New Cards
+              </Button>
+              <Button
+                type="button"
+                onClick={() => proceedWithImport(false)}
+                className="bg-orange-600 hover:bg-orange-700"
+                size="lg"
+              >
+                Import All Anyway ({parsedCards.length} cards)
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setShowDuplicateModal(false)}
+                variant="outline"
+                size="lg"
+              >
+                Cancel Import
+              </Button>
+            </div>
+
+            <div className="mt-4 text-xs text-gray-500">
+              <strong>Tip:</strong> Importing duplicates will create additional copies in inventory. 
+              Skipping duplicates will only import cards that don't already exist.
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAddCustomerModal && (
         <div
