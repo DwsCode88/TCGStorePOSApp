@@ -149,6 +149,10 @@ export default function IntakePage() {
     vendorCode: "",
   });
 
+  // Batch tracking
+  const [currentBatchId, setCurrentBatchId] = useState<string>("");
+  const [batchStartTime, setBatchStartTime] = useState<string>("");
+
   // Pricing settings with defaults (stored as percentages)
   const [conditionBuyPercents, setConditionBuyPercents] = useState({
     NM: 70,
@@ -169,6 +173,18 @@ export default function IntakePage() {
     }
     if (savedMarkup) {
       setSellMarkupPercent(parseFloat(savedMarkup));
+    }
+
+    // Initialize or restore batch ID
+    const savedBatch = localStorage.getItem("currentBatchId");
+    const savedBatchTime = localStorage.getItem("batchStartTime");
+    
+    if (savedBatch && savedBatchTime) {
+      setCurrentBatchId(savedBatch);
+      setBatchStartTime(savedBatchTime);
+      console.log(`📦 Restored batch: ${savedBatch}`);
+    } else {
+      startNewBatch();
     }
 
     // Load customers from Firebase
@@ -204,6 +220,21 @@ export default function IntakePage() {
       consignorPayoutPercent: 60,
     },
   });
+
+  const startNewBatch = () => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const batchId = `BATCH-${timestamp}`;
+    const startTime = new Date().toISOString();
+    
+    setCurrentBatchId(batchId);
+    setBatchStartTime(startTime);
+    
+    localStorage.setItem("currentBatchId", batchId);
+    localStorage.setItem("batchStartTime", startTime);
+    
+    toast.success(`Started new batch: ${batchId}`);
+    console.log(`📦 New batch started: ${batchId}`);
+  };
 
   useEffect(() => {
     const providers = getAvailableProviders();
@@ -555,6 +586,13 @@ export default function IntakePage() {
         customerVendorCode || undefined
       );
 
+      console.log("=== SKU GENERATION DEBUG ===");
+      console.log("Card Number:", selectedCard.number);
+      console.log("Card ID:", selectedCard.id);
+      console.log("Acquisition Type:", data.acquisitionType);
+      console.log("Vendor Code:", customerVendorCode);
+      console.log("Generated SKU:", sku);
+
       const inventoryData = {
         ...data,
         sku: sku,
@@ -566,6 +604,8 @@ export default function IntakePage() {
         status: "priced",
         priceSource: apiProvider ? getProviderName(apiProvider) : "Unknown",
         imageUrl: selectedCard.imageUrl,
+        batchId: currentBatchId,  // ✅ Add batch tracking
+        batchStartTime: batchStartTime,
         ...(data.acquisitionType === "consignment" && {
           customerId: selectedCustomerId,
           customerVendorCode: customerVendorCode,
@@ -576,11 +616,19 @@ export default function IntakePage() {
         }),
       };
 
+      console.log("=== INVENTORY DATA TO SAVE ===");
+      console.log("SKU in data:", inventoryData.sku);
+      console.log("Full data:", inventoryData);
+
       const docRef = await addDoc(collection(db, "inventory"), {
         ...inventoryData,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
+
+      console.log("=== SAVED TO FIREBASE ===");
+      console.log("Document ID:", docRef.id);
+      console.log("SKU that should be saved:", sku);
 
       setSessionCards([
         ...sessionCards,
@@ -645,6 +693,12 @@ export default function IntakePage() {
                 >
                   ⚙️ Settings
                 </a>
+                <a
+                  href="/batches"
+                  className="inline-flex items-center px-3 py-1 mb-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  📦 Manage Batches
+                </a>
               </div>
               <p className="text-gray-600">Make offers to buy cards</p>
               <p className="text-xs text-gray-500 mt-1">
@@ -653,6 +707,25 @@ export default function IntakePage() {
                   {getProviderName(apiProvider)}
                 </span>
               </p>
+              
+              {/* Batch Info */}
+              <div className="mt-3 flex items-center gap-3">
+                <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-2">
+                  <div className="text-xs text-purple-600 font-medium">Current Batch</div>
+                  <div className="text-sm font-mono font-bold text-purple-900">{currentBatchId}</div>
+                  <div className="text-xs text-purple-600">
+                    {acceptedCards.length} items in this batch
+                  </div>
+                </div>
+                <Button
+                  onClick={startNewBatch}
+                  variant="outline"
+                  size="sm"
+                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                >
+                  🔄 Start New Batch
+                </Button>
+              </div>
             </div>
 
             {availableProviders.length > 1 && (
