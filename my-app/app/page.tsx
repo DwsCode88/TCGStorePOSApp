@@ -474,7 +474,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <Link href="/intake" className="block">
             <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
               <Upload className="w-10 h-10 text-blue-600 mb-3" />
@@ -483,12 +483,22 @@ export default function DashboardPage() {
             </div>
           </Link>
 
+          <Link href="/tcgplayer-upload" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-green-200 bg-green-50">
+              <FileUp className="w-10 h-10 text-green-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">TCGPlayer Upload</h3>
+              <p className="text-sm text-gray-600">
+                Bulk CSV import with batch tracking
+              </p>
+            </div>
+          </Link>
+
           <Link href="/consignment-intake" className="block">
             <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-purple-200 bg-purple-50">
-              <FileUp className="w-10 h-10 text-purple-600 mb-3" />
-              <h3 className="text-lg font-semibold mb-2">Import TCG CSV</h3>
+              <ShoppingCart className="w-10 h-10 text-purple-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Consignment Intake</h3>
               <p className="text-sm text-gray-600">
-                Bulk upload from TCGPlayer
+                Accept items on consignment
               </p>
             </div>
           </Link>
@@ -510,6 +520,14 @@ export default function DashboardPage() {
               <Package className="w-10 h-10 text-purple-600 mb-3" />
               <h3 className="text-lg font-semibold mb-2">View Inventory</h3>
               <p className="text-sm text-gray-600">{totalCards} total cards</p>
+            </div>
+          </Link>
+
+          <Link href="/batches" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-orange-200 bg-orange-50">
+              <Archive className="w-10 h-10 text-orange-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Manage Batches</h3>
+              <p className="text-sm text-gray-600">View and delete batches</p>
             </div>
           </Link>
         </div>
