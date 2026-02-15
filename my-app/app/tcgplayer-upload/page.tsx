@@ -38,16 +38,18 @@ export default function TCGPlayerUploadPage() {
   const [importProgress, setImportProgress] = useState(0);
   const [currentBatchId, setCurrentBatchId] = useState<string>("");
   const [batchStartTime, setBatchStartTime] = useState<string>("");
-  
+
   // Duplicate checking
   const [duplicates, setDuplicates] = useState<ParsedCard[]>([]);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-  
+
   // Default settings
   const [defaultLocation, setDefaultLocation] = useState("A-1");
   const [defaultMarkup, setDefaultMarkup] = useState(30);
-  const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<"buy" | "trade" | "pull" | "consignment">("buy");
-  
+  const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<
+    "buy" | "trade" | "pull" | "consignment"
+  >("buy");
+
   // Customer management
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
@@ -120,7 +122,7 @@ export default function TCGPlayerUploadPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (!selectedFile.name.endsWith('.csv')) {
+      if (!selectedFile.name.endsWith(".csv")) {
         toast.error("Please upload a CSV file");
         return;
       }
@@ -138,57 +140,79 @@ export default function TCGPlayerUploadPage() {
     setLoading(true);
     try {
       const text = await file.text();
-      const lines = text.split('\n').filter(line => line.trim());
-      
+      const lines = text.split("\n").filter((line) => line.trim());
+
       if (lines.length < 2) {
         toast.error("CSV file is empty or invalid");
         setLoading(false);
         return;
       }
 
-      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-      
-      const productNameIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('product') || h.toLowerCase().includes('name')
+      const headers = lines[0]
+        .split(",")
+        .map((h) => h.trim().replace(/"/g, ""));
+
+      const productNameIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("product") ||
+          h.toLowerCase().includes("name"),
       );
-      const setNameIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('set') || h.toLowerCase().includes('edition')
+      const setNameIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("set") ||
+          h.toLowerCase().includes("edition"),
       );
-      const cardNumberIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('number') || h.toLowerCase() === 'card #'
+      const cardNumberIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("number") || h.toLowerCase() === "card #",
       );
-      const conditionIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('condition')
+      const conditionIndex = headers.findIndex((h) =>
+        h.toLowerCase().includes("condition"),
       );
-      const printingIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('printing') || h.toLowerCase().includes('finish')
+      const printingIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("printing") ||
+          h.toLowerCase().includes("finish"),
       );
-      const languageIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('language')
+      const languageIndex = headers.findIndex((h) =>
+        h.toLowerCase().includes("language"),
       );
-      const quantityIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('quantity') || h.toLowerCase() === 'qty'
+      const quantityIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("quantity") || h.toLowerCase() === "qty",
       );
-      const priceIndex = headers.findIndex(h => 
-        h.toLowerCase().includes('price') || h.toLowerCase().includes('market')
+      const priceIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("price") ||
+          h.toLowerCase().includes("market"),
       );
 
       const cards: ParsedCard[] = [];
 
       for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-        
+        const values = lines[i]
+          .split(",")
+          .map((v) => v.trim().replace(/"/g, ""));
+
         if (values.length < 3) continue;
 
         const card: ParsedCard = {
-          productName: productNameIndex >= 0 ? values[productNameIndex] : `Card ${i}`,
+          productName:
+            productNameIndex >= 0 ? values[productNameIndex] : `Card ${i}`,
           setName: setNameIndex >= 0 ? values[setNameIndex] : "Unknown Set",
           cardNumber: cardNumberIndex >= 0 ? values[cardNumberIndex] : "",
-          condition: conditionIndex >= 0 ? normalizeCondition(values[conditionIndex]) : "NM",
+          condition:
+            conditionIndex >= 0
+              ? normalizeCondition(values[conditionIndex])
+              : "NM",
           printing: printingIndex >= 0 ? values[printingIndex] : "Normal",
           language: languageIndex >= 0 ? values[languageIndex] : "English",
-          quantity: quantityIndex >= 0 ? parseInt(values[quantityIndex]) || 1 : 1,
-          marketPrice: priceIndex >= 0 ? parseFloat(values[priceIndex].replace('$', '')) || 0 : 0,
+          quantity:
+            quantityIndex >= 0 ? parseInt(values[quantityIndex]) || 1 : 1,
+          marketPrice:
+            priceIndex >= 0
+              ? parseFloat(values[priceIndex].replace("$", "")) || 0
+              : 0,
         };
 
         cards.push(card);
@@ -212,20 +236,27 @@ export default function TCGPlayerUploadPage() {
 
   const normalizeCondition = (condition: string): string => {
     const c = condition.toUpperCase().trim();
-    if (c.includes('NEAR MINT') || c.includes('NM')) return 'NM';
-    if (c.includes('LIGHT') || c.includes('LP')) return 'LP';
-    if (c.includes('MODERATE') || c.includes('MP')) return 'MP';
-    if (c.includes('HEAVY') || c.includes('HP')) return 'HP';
-    if (c.includes('DAMAGE') || c.includes('DMG')) return 'DMG';
-    return 'NM';
+    if (c.includes("NEAR MINT") || c.includes("NM")) return "NM";
+    if (c.includes("LIGHT") || c.includes("LP")) return "LP";
+    if (c.includes("MODERATE") || c.includes("MP")) return "MP";
+    if (c.includes("HEAVY") || c.includes("HP")) return "HP";
+    if (c.includes("DAMAGE") || c.includes("DMG")) return "DMG";
+    return "NM";
   };
 
   const generateBatchId = () => {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 19);
     return `TCGPLAYER-${timestamp}`;
   };
 
-  const generateSKU = (card: ParsedCard, vendorCode?: string): string => {
+  const generateSKU = (
+    card: ParsedCard,
+    vendorCode?: string,
+    acquisitionType?: string,
+  ): string => {
     // For consignment with vendor code
     if (vendorCode && card.cardNumber) {
       return `${vendorCode}-${card.cardNumber}`;
@@ -234,12 +265,23 @@ export default function TCGPlayerUploadPage() {
       const random = Math.floor(100000 + Math.random() * 900000);
       return `${vendorCode}-${random}`;
     }
-    
-    // For non-consignment or no vendor code
+
+    // For buy items - add condition to card number
+    if (acquisitionType === "buy" && card.cardNumber) {
+      return `${card.cardNumber}-${card.condition}`;
+    }
+
+    // For buy items without card number
+    if (acquisitionType === "buy") {
+      const random = Math.floor(100000 + Math.random() * 900000);
+      return `CARD-${card.condition}-${random}`;
+    }
+
+    // For trade/pull or no card number
     if (card.cardNumber) {
       return card.cardNumber;
     }
-    
+
     const random = Math.floor(100000 + Math.random() * 900000);
     return `CARD-${random}`;
   };
@@ -250,7 +292,7 @@ export default function TCGPlayerUploadPage() {
     try {
       setLoading(true);
       const inventorySnapshot = await getDocs(collection(db, "inventory"));
-      const existingCards = inventorySnapshot.docs.map(doc => ({
+      const existingCards = inventorySnapshot.docs.map((doc) => ({
         sku: doc.data().sku,
         cardName: doc.data().cardName,
         setName: doc.data().setName,
@@ -258,23 +300,31 @@ export default function TCGPlayerUploadPage() {
       }));
 
       const foundDuplicates: ParsedCard[] = [];
-      
+
       // Get customer vendor code ONLY if consignment
-      const customer = defaultAcquisitionType === "consignment"
-        ? customers.find(c => c.id === selectedCustomerId)
-        : null;
-      const vendorCode = defaultAcquisitionType === "consignment" ? (customer?.vendorCode || "") : "";
+      const customer =
+        defaultAcquisitionType === "consignment"
+          ? customers.find((c) => c.id === selectedCustomerId)
+          : null;
+      const vendorCode =
+        defaultAcquisitionType === "consignment"
+          ? customer?.vendorCode || ""
+          : "";
 
       for (const card of parsedCards) {
-        const sku = generateSKU(card, vendorCode);
-        
+        const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
+
         // Check if SKU exists
-        const skuExists = existingCards.some(existing => existing.sku === sku);
-        
+        const skuExists = existingCards.some(
+          (existing) => existing.sku === sku,
+        );
+
         // Check if card name + set exists
-        const cardExists = existingCards.some(existing => 
-          existing.cardName?.toLowerCase() === card.productName?.toLowerCase() &&
-          existing.setName?.toLowerCase() === card.setName?.toLowerCase()
+        const cardExists = existingCards.some(
+          (existing) =>
+            existing.cardName?.toLowerCase() ===
+              card.productName?.toLowerCase() &&
+            existing.setName?.toLowerCase() === card.setName?.toLowerCase(),
         );
 
         if (skuExists || cardExists) {
@@ -283,7 +333,7 @@ export default function TCGPlayerUploadPage() {
       }
 
       setDuplicates(foundDuplicates);
-      
+
       if (foundDuplicates.length > 0) {
         setShowDuplicateModal(true);
       } else {
@@ -316,10 +366,15 @@ export default function TCGPlayerUploadPage() {
   const proceedWithImport = async (skipDuplicates: boolean = false) => {
     setShowDuplicateModal(false);
 
-    const cardsToImport = skipDuplicates 
-      ? parsedCards.filter(card => !duplicates.some(dup => 
-          dup.productName === card.productName && dup.setName === card.setName
-        ))
+    const cardsToImport = skipDuplicates
+      ? parsedCards.filter(
+          (card) =>
+            !duplicates.some(
+              (dup) =>
+                dup.productName === card.productName &&
+                dup.setName === card.setName,
+            ),
+        )
       : parsedCards;
 
     if (cardsToImport.length === 0) {
@@ -327,18 +382,18 @@ export default function TCGPlayerUploadPage() {
       return;
     }
 
-    const customer = customers.find(c => c.id === selectedCustomerId);
-    
+    const customer = customers.find((c) => c.id === selectedCustomerId);
+
     const confirmed = confirm(
       `Import ${cardsToImport.length} cards to inventory?\n\n` +
-      `Acquisition: ${defaultAcquisitionType}\n` +
-      `Location: ${defaultLocation}\n` +
-      `Markup: ${defaultMarkup}%\n` +
-      (skipDuplicates ? `Skipping ${duplicates.length} duplicates\n` : '') +
-      (defaultAcquisitionType === "consignment" && customer
-        ? `Customer: ${customer.name}\n`
-        : "") +
-      `\nAll items will be tagged with a batch ID for easy management.`
+        `Acquisition: ${defaultAcquisitionType}\n` +
+        `Location: ${defaultLocation}\n` +
+        `Markup: ${defaultMarkup}%\n` +
+        (skipDuplicates ? `Skipping ${duplicates.length} duplicates\n` : "") +
+        (defaultAcquisitionType === "consignment" && customer
+          ? `Customer: ${customer.name}\n`
+          : "") +
+        `\nAll items will be tagged with a batch ID for easy management.`,
     );
 
     if (!confirmed) return;
@@ -363,16 +418,19 @@ export default function TCGPlayerUploadPage() {
 
       for (let i = 0; i < cardsToImport.length; i++) {
         const card = cardsToImport[i];
-        
+
         try {
           // Use vendor code ONLY for consignment
-          const vendorCode = defaultAcquisitionType === "consignment" ? (customer?.vendorCode || "") : "";
-          const sku = generateSKU(card, vendorCode);
+          const vendorCode =
+            defaultAcquisitionType === "consignment"
+              ? customer?.vendorCode || ""
+              : "";
+          const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
           const sellPrice = card.marketPrice * (1 + defaultMarkup / 100);
-          
+
           let costBasis = 0;
           if (defaultAcquisitionType === "buy") {
-            costBasis = card.marketPrice * 0.70;
+            costBasis = card.marketPrice * 0.7;
           } else if (defaultAcquisitionType === "trade") {
             costBasis = card.marketPrice * 0.75;
           }
@@ -405,14 +463,14 @@ export default function TCGPlayerUploadPage() {
             inventoryData.customerName = customer.name;
             inventoryData.customerVendorCode = customer.vendorCode || "";
             inventoryData.consignorPayoutPercent = 60;
-            inventoryData.consignorOwed = sellPrice * 0.60;
+            inventoryData.consignorOwed = sellPrice * 0.6;
             inventoryData.consignorPaid = false;
             inventoryData.consignmentDate = new Date().toISOString();
           }
 
           await addDoc(collection(db, "inventory"), inventoryData);
           successCount++;
-          
+
           setImportProgress(Math.round(((i + 1) / cardsToImport.length) * 100));
         } catch (error: any) {
           console.error(`Error importing card ${i + 1}:`, error);
@@ -420,12 +478,14 @@ export default function TCGPlayerUploadPage() {
         }
       }
 
-      console.log(`✅ Import complete: ${successCount} success, ${errorCount} errors`);
+      console.log(
+        `✅ Import complete: ${successCount} success, ${errorCount} errors`,
+      );
       console.log(`Batch ID: ${batchId}`);
 
       if (successCount > 0) {
         toast.success(
-          `Successfully imported ${successCount} cards!${errorCount > 0 ? ` (${errorCount} errors)` : ''}\n\nBatch: ${batchId}`
+          `Successfully imported ${successCount} cards!${errorCount > 0 ? ` (${errorCount} errors)` : ""}\n\nBatch: ${batchId}`,
         );
       } else {
         toast.error("Import failed. Check console for errors.");
@@ -461,25 +521,45 @@ export default function TCGPlayerUploadPage() {
               📦 Manage Batches
             </a>
           </div>
-          <p className="text-gray-600">Import cards from TCGPlayer CSV export</p>
+          <p className="text-gray-600">
+            Import cards from TCGPlayer CSV export
+          </p>
 
           {currentBatchId && (
             <div className="mt-3 bg-green-50 border border-green-200 rounded-lg px-4 py-2 inline-block">
-              <div className="text-xs text-green-600 font-medium">Last Import Batch</div>
-              <div className="text-sm font-mono font-bold text-green-900">{currentBatchId}</div>
+              <div className="text-xs text-green-600 font-medium">
+                Last Import Batch
+              </div>
+              <div className="text-sm font-mono font-bold text-green-900">
+                {currentBatchId}
+              </div>
             </div>
           )}
         </div>
 
         <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-blue-900 mb-3">📋 How to Use</h2>
+          <h2 className="text-lg font-semibold text-blue-900 mb-3">
+            📋 How to Use
+          </h2>
           <ol className="space-y-2 text-sm text-blue-800">
-            <li><strong>1.</strong> Export your inventory as CSV from TCGPlayer</li>
-            <li><strong>2.</strong> Upload the CSV file below</li>
-            <li><strong>3.</strong> Review the parsed cards</li>
-            <li><strong>4.</strong> Set acquisition type, location and markup</li>
-            <li><strong>5.</strong> For consignment: select customer</li>
-            <li><strong>6.</strong> Click "Import to Inventory"</li>
+            <li>
+              <strong>1.</strong> Export your inventory as CSV from TCGPlayer
+            </li>
+            <li>
+              <strong>2.</strong> Upload the CSV file below
+            </li>
+            <li>
+              <strong>3.</strong> Review the parsed cards
+            </li>
+            <li>
+              <strong>4.</strong> Set acquisition type, location and markup
+            </li>
+            <li>
+              <strong>5.</strong> For consignment: select customer
+            </li>
+            <li>
+              <strong>6.</strong> Click "Import to Inventory"
+            </li>
           </ol>
         </div>
 
@@ -487,7 +567,7 @@ export default function TCGPlayerUploadPage() {
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-xl font-semibold mb-4">1. Upload CSV</h2>
-              
+
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
                 <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
                 <input
@@ -503,7 +583,7 @@ export default function TCGPlayerUploadPage() {
                 >
                   Choose CSV File
                 </label>
-                
+
                 {file && (
                   <div className="mt-4 flex items-center justify-center gap-2 text-sm">
                     <Check className="w-4 h-4 text-green-600" />
@@ -538,10 +618,13 @@ export default function TCGPlayerUploadPage() {
                 <h2 className="text-xl font-semibold mb-4">
                   2. Preview ({parsedCards.length} cards)
                 </h2>
-                
+
                 <div className="max-h-96 overflow-y-auto space-y-2">
                   {parsedCards.slice(0, 50).map((card, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded border text-sm">
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded border text-sm"
+                    >
                       <div className="flex-1">
                         <div className="font-semibold">{card.productName}</div>
                         <div className="text-xs text-gray-600">
@@ -554,7 +637,9 @@ export default function TCGPlayerUploadPage() {
                           ${card.marketPrice.toFixed(2)}
                         </div>
                         {card.quantity > 1 && (
-                          <div className="text-xs text-gray-600">×{card.quantity}</div>
+                          <div className="text-xs text-gray-600">
+                            ×{card.quantity}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -575,10 +660,14 @@ export default function TCGPlayerUploadPage() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Acquisition Type</label>
+                  <label className="block text-sm font-medium mb-2">
+                    Acquisition Type
+                  </label>
                   <select
                     value={defaultAcquisitionType}
-                    onChange={(e) => setDefaultAcquisitionType(e.target.value as any)}
+                    onChange={(e) =>
+                      setDefaultAcquisitionType(e.target.value as any)
+                    }
                     className="w-full px-3 py-2 border rounded-lg"
                   >
                     <option value="buy">💰 Buy</option>
@@ -610,7 +699,8 @@ export default function TCGPlayerUploadPage() {
                       <option value="">-- Select Customer --</option>
                       {customers.map((customer) => (
                         <option key={customer.id} value={customer.id}>
-                          {customer.name} {customer.phone && `(${customer.phone})`}
+                          {customer.name}{" "}
+                          {customer.phone && `(${customer.phone})`}
                           {customer.vendorCode && ` [${customer.vendorCode}]`}
                         </option>
                       ))}
@@ -624,7 +714,9 @@ export default function TCGPlayerUploadPage() {
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">Default Location</label>
+                  <label className="block text-sm font-medium mb-2">
+                    Default Location
+                  </label>
                   <input
                     type="text"
                     value={defaultLocation}
@@ -635,11 +727,15 @@ export default function TCGPlayerUploadPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">Markup %</label>
+                  <label className="block text-sm font-medium mb-2">
+                    Markup %
+                  </label>
                   <input
                     type="number"
                     value={defaultMarkup}
-                    onChange={(e) => setDefaultMarkup(parseFloat(e.target.value) || 30)}
+                    onChange={(e) =>
+                      setDefaultMarkup(parseFloat(e.target.value) || 30)
+                    }
                     className="w-full px-3 py-2 border rounded-lg"
                     min="0"
                     max="200"
@@ -653,9 +749,11 @@ export default function TCGPlayerUploadPage() {
               {parsedCards.length > 0 && (
                 <>
                   <div className="border-t my-4"></div>
-                  
+
                   <div className="bg-green-50 border border-green-200 rounded p-3 mb-4">
-                    <div className="text-sm font-semibold text-gray-700 mb-2">Import Summary</div>
+                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                      Import Summary
+                    </div>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
                         <span>Total Cards:</span>
@@ -664,7 +762,13 @@ export default function TCGPlayerUploadPage() {
                       <div className="flex justify-between">
                         <span>Total Value:</span>
                         <span className="font-bold text-green-600">
-                          ${parsedCards.reduce((sum, c) => sum + (c.marketPrice * c.quantity), 0).toFixed(2)}
+                          $
+                          {parsedCards
+                            .reduce(
+                              (sum, c) => sum + c.marketPrice * c.quantity,
+                              0,
+                            )
+                            .toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -676,7 +780,11 @@ export default function TCGPlayerUploadPage() {
                     className="w-full bg-green-600 hover:bg-green-700"
                     size="lg"
                   >
-                    {importing ? `Importing... ${importProgress}%` : loading ? "Checking..." : "Check & Import to Inventory"}
+                    {importing
+                      ? `Importing... ${importProgress}%`
+                      : loading
+                        ? "Checking..."
+                        : "Check & Import to Inventory"}
                   </Button>
 
                   {importing && (
@@ -697,7 +805,9 @@ export default function TCGPlayerUploadPage() {
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-amber-800">
-                  <strong>Batch Tracking:</strong> All imported cards will be tagged with a unique batch ID. You can delete the entire import later from the Batches page if needed.
+                  <strong>Batch Tracking:</strong> All imported cards will be
+                  tagged with a unique batch ID. You can delete the entire
+                  import later from the Batches page if needed.
                 </div>
               </div>
             </div>
@@ -723,15 +833,23 @@ export default function TCGPlayerUploadPage() {
               ⚠️ Duplicate Cards Found
             </h2>
             <p className="text-gray-600 mb-6">
-              {duplicates.length} card(s) already exist in your inventory. What would you like to do?
+              {duplicates.length} card(s) already exist in your inventory. What
+              would you like to do?
             </p>
 
             <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6 max-h-64 overflow-y-auto">
-              <h3 className="font-semibold text-orange-900 mb-3">Duplicate Cards:</h3>
+              <h3 className="font-semibold text-orange-900 mb-3">
+                Duplicate Cards:
+              </h3>
               <div className="space-y-2">
                 {duplicates.map((card, idx) => (
-                  <div key={idx} className="bg-white rounded p-3 border border-orange-200">
-                    <div className="font-medium text-sm">{card.productName}</div>
+                  <div
+                    key={idx}
+                    className="bg-white rounded p-3 border border-orange-200"
+                  >
+                    <div className="font-medium text-sm">
+                      {card.productName}
+                    </div>
                     <div className="text-xs text-gray-600">
                       {card.setName} • {card.condition}
                       {card.cardNumber && ` • #${card.cardNumber}`}
@@ -748,7 +866,8 @@ export default function TCGPlayerUploadPage() {
                 className="bg-blue-600 hover:bg-blue-700"
                 size="lg"
               >
-                Skip Duplicates & Import {parsedCards.length - duplicates.length} New Cards
+                Skip Duplicates & Import{" "}
+                {parsedCards.length - duplicates.length} New Cards
               </Button>
               <Button
                 type="button"
@@ -769,8 +888,9 @@ export default function TCGPlayerUploadPage() {
             </div>
 
             <div className="mt-4 text-xs text-gray-500">
-              <strong>Tip:</strong> Importing duplicates will create additional copies in inventory. 
-              Skipping duplicates will only import cards that don't already exist.
+              <strong>Tip:</strong> Importing duplicates will create additional
+              copies in inventory. Skipping duplicates will only import cards
+              that don't already exist.
             </div>
           </div>
         </div>
@@ -796,9 +916,7 @@ export default function TCGPlayerUploadPage() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Name *
-                </label>
+                <label className="block text-sm font-medium mb-1">Name *</label>
                 <input
                   type="text"
                   value={newCustomer.name}
@@ -812,9 +930,7 @@ export default function TCGPlayerUploadPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Phone
-                </label>
+                <label className="block text-sm font-medium mb-1">Phone</label>
                 <input
                   type="tel"
                   value={newCustomer.phone}
@@ -827,9 +943,7 @@ export default function TCGPlayerUploadPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Email
-                </label>
+                <label className="block text-sm font-medium mb-1">Email</label>
                 <input
                   type="email"
                   value={newCustomer.email}
@@ -881,7 +995,12 @@ export default function TCGPlayerUploadPage() {
                 type="button"
                 onClick={() => {
                   setShowAddCustomerModal(false);
-                  setNewCustomer({ name: "", phone: "", email: "", vendorCode: "" });
+                  setNewCustomer({
+                    name: "",
+                    phone: "",
+                    email: "",
+                    vendorCode: "",
+                  });
                 }}
                 variant="outline"
                 size="lg"
