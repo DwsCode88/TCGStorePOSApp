@@ -49,6 +49,7 @@ export default function TCGPlayerUploadPage() {
   const [defaultAcquisitionType, setDefaultAcquisitionType] = useState<
     "buy" | "trade" | "pull" | "consignment"
   >("buy");
+  const [batchName, setBatchName] = useState("");
 
   // Customer management
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -249,6 +250,10 @@ export default function TCGPlayerUploadPage() {
       .toISOString()
       .replace(/[:.]/g, "-")
       .slice(0, 19);
+    if (batchName.trim()) {
+      // Use custom name + timestamp for uniqueness
+      return `TCGPLAYER-${batchName.trim().replace(/\s+/g, "-").toUpperCase()}-${timestamp}`;
+    }
     return `TCGPLAYER-${timestamp}`;
   };
 
@@ -742,6 +747,23 @@ export default function TCGPlayerUploadPage() {
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     Cards will be priced at market + {defaultMarkup}%
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Batch Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={batchName}
+                    onChange={(e) => setBatchName(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder="e.g., ROMANCE-DAWN or WEEKLY-RESTOCK"
+                    maxLength={50}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Custom name for this batch (leave empty for auto-generated)
                   </p>
                 </div>
               </div>
