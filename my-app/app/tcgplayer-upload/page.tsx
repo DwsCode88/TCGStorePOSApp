@@ -153,15 +153,24 @@ export default function TCGPlayerUploadPage() {
         .split(",")
         .map((h) => h.trim().replace(/"/g, ""));
 
-      const productNameIndex = headers.findIndex(
-        (h) =>
-          h.toLowerCase().includes("product") ||
-          h.toLowerCase().includes("name"),
-      );
+      console.log("CSV Headers:", headers);
+
+      // More specific matching for product/card name
+      const productNameIndex = headers.findIndex((h) => {
+        const lower = h.toLowerCase();
+        return (
+          lower === "product name" ||
+          lower === "product" ||
+          lower === "card name" ||
+          lower === "title" ||
+          lower === "name"
+        );
+      });
+
       const setNameIndex = headers.findIndex(
         (h) =>
-          h.toLowerCase().includes("set") ||
-          h.toLowerCase().includes("edition"),
+          h.toLowerCase().includes("set") &&
+          !h.toLowerCase().includes("product"),
       );
       const cardNumberIndex = headers.findIndex(
         (h) =>
@@ -187,6 +196,39 @@ export default function TCGPlayerUploadPage() {
           h.toLowerCase().includes("price") ||
           h.toLowerCase().includes("market"),
       );
+
+      // Log detected columns for debugging
+      console.log("Column Detection:");
+      console.log(
+        "- Product Name:",
+        productNameIndex >= 0 ? headers[productNameIndex] : "NOT FOUND",
+      );
+      console.log(
+        "- Set Name:",
+        setNameIndex >= 0 ? headers[setNameIndex] : "NOT FOUND",
+      );
+      console.log(
+        "- Card Number:",
+        cardNumberIndex >= 0 ? headers[cardNumberIndex] : "NOT FOUND",
+      );
+      console.log(
+        "- Condition:",
+        conditionIndex >= 0 ? headers[conditionIndex] : "NOT FOUND",
+      );
+      console.log(
+        "- Price:",
+        priceIndex >= 0 ? headers[priceIndex] : "NOT FOUND",
+      );
+
+      // Warn if product name not found
+      if (productNameIndex === -1) {
+        toast.error(
+          "Could not find 'Product Name' column in CSV. Please check your file format.",
+        );
+        console.error("Available headers:", headers);
+        setLoading(false);
+        return;
+      }
 
       const cards: ParsedCard[] = [];
 
@@ -215,6 +257,11 @@ export default function TCGPlayerUploadPage() {
               ? parseFloat(values[priceIndex].replace("$", "")) || 0
               : 0,
         };
+
+        // Log first card for debugging
+        if (i === 1) {
+          console.log("First parsed card:", card);
+        }
 
         cards.push(card);
       }
@@ -462,6 +509,15 @@ export default function TCGPlayerUploadPage() {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
+
+          // Log first item being saved for debugging
+          if (i === 0) {
+            console.log("First item being saved to Firebase:", {
+              sku: inventoryData.sku,
+              cardName: inventoryData.cardName,
+              setName: inventoryData.setName,
+            });
+          }
 
           if (defaultAcquisitionType === "consignment" && customer) {
             inventoryData.customerId = selectedCustomerId;
