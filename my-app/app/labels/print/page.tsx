@@ -14,9 +14,14 @@ export const dynamic = "force-dynamic";
 
 export default function LabelsPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [allItems, setAllItems] = useState<InventoryItem[]>([]); // Store all items
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+
+  // Batch filtering
+  const [selectedBatch, setSelectedBatch] = useState<string>("priced-only");
+  const [batches, setBatches] = useState<string[]>([]);
 
   // Label size
   const [width, setWidth] = useState(2.0);
@@ -138,13 +143,13 @@ export default function LabelsPage() {
     try {
       console.log("📦 Loading inventory from Firebase...");
       const snapshot = await getDocs(collection(db, "inventory"));
-      
+
       // ✅ FIXED: Use SKU from database, not doc ID
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
         return {
           ...data,
-          id: doc.id,              // Keep doc ID for updates
+          id: doc.id, // Keep doc ID for updates
           sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
         };
       }) as InventoryItem[];
@@ -162,46 +167,67 @@ export default function LabelsPage() {
         console.log(`  - ${status}: ${count} items`);
       });
 
-      const needsLabels = loadedItems.filter(
-        (item) => item.status === "priced",
-      );
-      const excludedCount = loadedItems.length - needsLabels.length;
+      // Extract unique batch IDs
+      const uniqueBatches = Array.from(
+        new Set(loadedItems.map((item) => item.batchId).filter((id) => id)),
+      ).sort((a, b) => b.localeCompare(a)); // Most recent first
 
-      console.log(`\n🏷️ LABEL QUEUE (Auto-filtered):`);
-      console.log(`  Items that need labels (priced): ${needsLabels.length}`);
-      console.log(
-        `  Items excluded (already labeled/listed/pending): ${excludedCount}`,
-      );
+      setBatches(uniqueBatches);
+      setAllItems(loadedItems);
 
-      console.log(`\nItems that need labels:`);
-      needsLabels.forEach((item, i) => {
-        console.log(
-          `  ${i + 1}. ${item.cardName} (${item.sku}) - Status: ${item.status}`,
-        );
-      });
+      // Apply initial filter (priced-only by default)
+      filterItemsByBatch(loadedItems, selectedBatch);
+
+      console.log(`\n📦 Found ${uniqueBatches.length} unique batches`);
       console.log("");
 
-      setItems(
-        needsLabels.sort((a, b) => {
-          if (a.status === "priced" && b.status !== "priced") return -1;
-          if (a.status !== "priced" && b.status === "priced") return 1;
-          return 0;
-        }),
-      );
-
-      if (needsLabels.length > 0) {
-        toast.success(
-          `${needsLabels.length} items need labels (${excludedCount} already done)`,
-        );
-      } else {
-        toast.success(`✅ All caught up! No items need labels.`);
-      }
+      toast.success(`Loaded ${loadedItems.length} items from inventory`);
     } catch (error: any) {
-      console.error("Failed:", error);
+      console.error("Failed to load inventory:", error);
       toast.error("Failed to load inventory");
     } finally {
       setLoading(false);
     }
+  };
+
+  const filterItemsByBatch = (
+    itemsToFilter: InventoryItem[],
+    batchFilter: string,
+  ) => {
+    let filtered: InventoryItem[];
+
+    if (batchFilter === "priced-only") {
+      // Show only items that need labels (status: priced)
+      filtered = itemsToFilter.filter((item) => item.status === "priced");
+      console.log(
+        `🏷️ Filtered to ${filtered.length} items that need labels (priced)`,
+      );
+    } else if (batchFilter === "all") {
+      // Show all items
+      filtered = itemsToFilter;
+      console.log(`📦 Showing all ${filtered.length} items`);
+    } else {
+      // Filter by specific batch
+      filtered = itemsToFilter.filter((item) => item.batchId === batchFilter);
+      console.log(
+        `📦 Filtered to batch ${batchFilter}: ${filtered.length} items`,
+      );
+    }
+
+    setItems(
+      filtered.sort((a, b) => {
+        if (a.status === "priced" && b.status !== "priced") return -1;
+        if (a.status !== "priced" && b.status === "priced") return 1;
+        return 0;
+      }),
+    );
+  };
+
+  // Handle batch filter change
+  const handleBatchChange = (batchId: string) => {
+    setSelectedBatch(batchId);
+    setSelectedItems(new Set()); // Clear selection when changing batch
+    filterItemsByBatch(allItems, batchId);
   };
 
   const toggleItem = (sku: string) => {
@@ -387,7 +413,7 @@ export default function LabelsPage() {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
             bcid: "code128",
-            text: item.sku,  // ✅ Correct SKU from database
+            text: item.sku, // ✅ Correct SKU from database
             scale: 3,
             height: 8,
             includetext: false,
@@ -409,7 +435,7 @@ export default function LabelsPage() {
         const skuYPos = labelY + (skuY / 100) * height;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" });  // ✅ Correct SKU
+        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" }); // ✅ Correct SKU
       }
 
       const pdfBlob = pdf.output("blob");
@@ -425,7 +451,8 @@ export default function LabelsPage() {
       // ✅ FIXED: Use item.id (document ID) for updateDoc, not item.sku
       await Promise.all(
         itemsToLabel.map((item) =>
-          updateDoc(doc(db, "inventory", item.id || item.sku), {  // ✅ Use doc ID
+          updateDoc(doc(db, "inventory", item.id || item.sku), {
+            // ✅ Use doc ID
             status: "labeled",
             updatedAt: new Date(),
           }),
@@ -461,21 +488,64 @@ export default function LabelsPage() {
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
         <h1 className="text-4xl font-bold mb-2">Print Labels</h1>
-        <p className="text-gray-600 mb-6">
-          Showing only items that need labels (status: "priced")
+        <p className="text-gray-600 mb-4">
+          {selectedBatch === "priced-only"
+            ? "Showing only items that need labels (status: priced)"
+            : selectedBatch === "all"
+              ? "Showing all items"
+              : `Showing items from batch: ${selectedBatch}`}
         </p>
+
+        {/* Batch Filter */}
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+              Filter by Batch:
+            </label>
+            <select
+              value={selectedBatch}
+              onChange={(e) => handleBatchChange(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="priced-only">📋 Needs Labels (Priced Only)</option>
+              <option value="all">📦 All Items</option>
+              {batches.length > 0 && (
+                <optgroup label="── Batches ──">
+                  {batches.map((batchId) => (
+                    <option key={batchId} value={batchId}>
+                      {batchId}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            <div className="text-sm text-gray-600 whitespace-nowrap">
+              {items.length} items
+            </div>
+          </div>
+        </div>
 
         {items.length === 0 && (
           <div className="bg-white rounded-lg shadow p-12 text-center mb-6">
-            <div className="text-6xl mb-4">✅</div>
+            <div className="text-6xl mb-4">
+              {selectedBatch === "priced-only" ? "✅" : "📦"}
+            </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              All caught up!
+              {selectedBatch === "priced-only"
+                ? "All caught up!"
+                : "No items found"}
             </h2>
             <p className="text-gray-600 mb-4">
-              No items need labels. All priced items have already been labeled.
+              {selectedBatch === "priced-only"
+                ? "No items need labels. All priced items have already been labeled."
+                : selectedBatch === "all"
+                  ? "No items in inventory."
+                  : `No items found in batch: ${selectedBatch}`}
             </p>
             <p className="text-sm text-gray-500">
-              Add new items or check the inventory page to see labeled items.
+              {selectedBatch === "priced-only"
+                ? "Add new items or check the inventory page to see labeled items."
+                : "Try selecting a different batch from the filter above."}
             </p>
           </div>
         )}
@@ -497,8 +567,26 @@ export default function LabelsPage() {
                 </div>
 
                 <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4 text-sm">
-                  <strong>ℹ️ Only showing items that need labels</strong> -
-                  Already labeled and listed items are automatically hidden.
+                  {selectedBatch === "priced-only" ? (
+                    <>
+                      <strong>ℹ️ Only showing items that need labels</strong> -
+                      Already labeled and listed items are automatically hidden.
+                    </>
+                  ) : selectedBatch === "all" ? (
+                    <>
+                      <strong>ℹ️ Showing all items</strong> - Including already
+                      labeled items. Use this to reprint labels for any item.
+                    </>
+                  ) : (
+                    <>
+                      <strong>ℹ️ Batch Filter Active</strong> - Showing items
+                      from batch:{" "}
+                      <code className="bg-blue-100 px-1 py-0.5 rounded">
+                        {selectedBatch}
+                      </code>
+                      . You can reprint labels for these items.
+                    </>
+                  )}
                 </div>
 
                 {selectedItems.size > 0 && (
