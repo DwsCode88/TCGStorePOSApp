@@ -552,6 +552,214 @@ export default function LabelsPage() {
 
         {items.length > 0 && (
           <>
+            {/* Label Preview */}
+            <div className="bg-white rounded-lg shadow p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold">
+                  📋 Label Designer & Preview
+                </h2>
+                <div className="text-sm text-gray-600">
+                  Adjust settings below to update preview in real-time
+                </div>
+              </div>
+
+              <div className="flex justify-center items-center bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg p-8 mb-4">
+                <div
+                  className="bg-white border-4 border-gray-800 shadow-2xl relative overflow-hidden"
+                  style={{
+                    width: `${width * 96}px`, // Convert inches to pixels (96 DPI)
+                    height: `${height * 96}px`,
+                  }}
+                >
+                  {/* Position Guide Lines (only show in preview) */}
+                  <div className="absolute inset-0 pointer-events-none opacity-20">
+                    {[0, 25, 50, 75, 100].map((percent) => (
+                      <div
+                        key={percent}
+                        className="absolute w-full border-t border-blue-300 border-dashed"
+                        style={{ top: `${percent}%` }}
+                      >
+                        <span className="absolute right-1 text-[8px] text-blue-600 -mt-2">
+                          {percent}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Store Name */}
+                  {showStore && (
+                    <div
+                      className="absolute w-full text-center font-bold"
+                      style={{
+                        top: `${storeY}%`,
+                        fontSize: `${storeFontSize}px`,
+                        transform: "translateY(-50%)",
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      Your Store Name
+                    </div>
+                  )}
+
+                  {/* Card Name */}
+                  <div
+                    className="absolute w-full text-center font-bold"
+                    style={{
+                      top: `${cardY}%`,
+                      fontSize: `${cardFontSize}px`,
+                      transform: "translateY(-50%)",
+                      paddingLeft: "4px",
+                      paddingRight: "4px",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    Monkey.D.Luffy
+                  </div>
+
+                  {/* Set Name */}
+                  {showSet && (
+                    <div
+                      className="absolute w-full text-center text-gray-600"
+                      style={{
+                        top: `${setY}%`,
+                        fontSize: `${setFontSize}px`,
+                        transform: "translateY(-50%)",
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      Romance Dawn
+                    </div>
+                  )}
+
+                  {/* Price */}
+                  <div
+                    className="absolute w-full text-center font-black"
+                    style={{
+                      top: `${priceY}%`,
+                      fontSize: `${priceFontSize}px`,
+                      transform: "translateY(-50%)",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    $10.00
+                  </div>
+
+                  {/* Barcode Placeholder */}
+                  <div
+                    className="absolute left-1/2 flex flex-col items-center"
+                    style={{
+                      top: `${barcodeY}%`,
+                      transform: "translate(-50%, -50%)",
+                    }}
+                  >
+                    <div className="flex gap-px">
+                      {Array.from({ length: 24 }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="bg-black"
+                          style={{
+                            width: i % 5 === 0 ? "3px" : "2px",
+                            height: `${height * 16}px`,
+                            opacity: Math.random() > 0.2 ? 1 : 0,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* SKU */}
+                  <div
+                    className="absolute w-full text-center font-mono"
+                    style={{
+                      top: `${skuY}%`,
+                      fontSize: `${skuFontSize}px`,
+                      transform: "translateY(-50%)",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    OP01-001-NM
+                  </div>
+
+                  {/* Dimension Label */}
+                  <div className="absolute -bottom-8 left-0 right-0 text-center text-sm font-semibold text-gray-700">
+                    {width}" × {height}"
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                  <div className="font-bold text-blue-900 mb-2 flex items-center gap-2">
+                    <span>📏</span> Label Size
+                  </div>
+                  <div className="text-blue-800 font-mono text-lg">
+                    {width}" × {height}"
+                  </div>
+                  <div className="text-blue-600 text-xs mt-1">
+                    {(width * 2.54).toFixed(1)}cm × {(height * 2.54).toFixed(1)}
+                    cm
+                  </div>
+                </div>
+                <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4">
+                  <div className="font-bold text-green-900 mb-2 flex items-center gap-2">
+                    <span>✅</span> Elements Shown
+                  </div>
+                  <div className="text-green-800">
+                    {[
+                      showStore && "Store",
+                      "Card Name",
+                      showSet && "Set",
+                      "Price",
+                      "Barcode",
+                      "SKU",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </div>
+                </div>
+                <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
+                  <div className="font-bold text-purple-900 mb-2 flex items-center gap-2">
+                    <span>🎨</span> Font Sizes
+                  </div>
+                  <div className="text-purple-800 text-xs space-y-1">
+                    {showStore && <div>Store: {storeFontSize}pt</div>}
+                    <div>Card: {cardFontSize}pt</div>
+                    {showSet && <div>Set: {setFontSize}pt</div>}
+                    <div>Price: {priceFontSize}pt</div>
+                    <div>SKU: {skuFontSize}pt</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+                <div className="flex items-start gap-2">
+                  <span className="text-xl">💡</span>
+                  <div className="flex-1">
+                    <div className="font-semibold text-amber-900 mb-1">
+                      Quick Tips:
+                    </div>
+                    <ul className="text-sm text-amber-800 space-y-1">
+                      <li>
+                        • <strong>Y Position (%)</strong> = Vertical position
+                        from top (0% = top, 100% = bottom)
+                      </li>
+                      <li>
+                        • <strong>Font Size (pt)</strong> = Text size in points
+                        (larger = bigger text)
+                      </li>
+                      <li>
+                        • Click <strong>💾 Save Layout</strong> to remember your
+                        settings
+                      </li>
+                      <li>
+                        • Guide lines show 0%, 25%, 50%, 75%, 100% positions
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
               <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between mb-4">
@@ -827,14 +1035,14 @@ export default function LabelsPage() {
 
               <div className="space-y-4">
                 <div className="bg-white rounded-lg shadow p-4">
-                  <h3 className="font-semibold mb-3">Label Size</h3>
-                  <div className="grid grid-cols-2 gap-2 mb-3">
+                  <h3 className="font-semibold mb-3">Label Size Presets</h3>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
                     <button
                       onClick={() => {
                         setWidth(2.0);
                         setHeight(1.0);
                       }}
-                      className="p-2 border rounded hover:bg-gray-50 text-sm"
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.0 && height === 1.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
                     >
                       Standard
                       <br />
@@ -842,10 +1050,21 @@ export default function LabelsPage() {
                     </button>
                     <button
                       onClick={() => {
+                        setWidth(2.625);
+                        setHeight(1.0);
+                      }}
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.625 && height === 1.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
+                    >
+                      Avery 5160
+                      <br />
+                      <span className="text-xs text-gray-600">2.625×1"</span>
+                    </button>
+                    <button
+                      onClick={() => {
                         setWidth(4.0);
                         setHeight(2.0);
                       }}
-                      className="p-2 border rounded hover:bg-gray-50 text-sm"
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 4.0 && height === 2.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
                     >
                       Thermal
                       <br />
