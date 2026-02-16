@@ -50,6 +50,7 @@ export default function TCGPlayerUploadPage() {
     "buy" | "trade" | "pull" | "consignment"
   >("buy");
   const [batchName, setBatchName] = useState("");
+  const [expandQuantities, setExpandQuantities] = useState(true); // Create separate items for each quantity
 
   // Customer management
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -187,10 +188,14 @@ export default function TCGPlayerUploadPage() {
       const languageIndex = headers.findIndex((h) =>
         h.toLowerCase().includes("language"),
       );
-      const quantityIndex = headers.findIndex(
-        (h) =>
-          h.toLowerCase().includes("quantity") || h.toLowerCase() === "qty",
-      );
+      const quantityIndex = headers.findIndex((h) => {
+        const lower = h.toLowerCase();
+        return (
+          lower.includes("quantity") ||
+          lower === "qty" ||
+          lower === "total quantity"
+        );
+      });
       const priceIndex = headers.findIndex(
         (h) =>
           h.toLowerCase().includes("price") ||
@@ -214,6 +219,10 @@ export default function TCGPlayerUploadPage() {
       console.log(
         "- Condition:",
         conditionIndex >= 0 ? headers[conditionIndex] : "NOT FOUND",
+      );
+      console.log(
+        "- Quantity:",
+        quantityIndex >= 0 ? headers[quantityIndex] : "NOT FOUND",
       );
       console.log(
         "- Price:",
@@ -260,7 +269,12 @@ export default function TCGPlayerUploadPage() {
 
         // Log first card for debugging
         if (i === 1) {
-          console.log("First parsed card:", card);
+          console.log("First parsed card:", {
+            productName: card.productName,
+            quantity: card.quantity,
+            condition: card.condition,
+            marketPrice: card.marketPrice,
+          });
         }
 
         cards.push(card);
@@ -460,7 +474,17 @@ export default function TCGPlayerUploadPage() {
 
     try {
       console.log(`📦 Starting TCGPlayer import batch: ${batchId}`);
-      console.log(`Total items: ${cardsToImport.length}`);
+      console.log(`CSV rows: ${cardsToImport.length}`);
+      console.log(`Expand quantities: ${expandQuantities ? "YES" : "NO"}`);
+      if (expandQuantities) {
+        const totalItems = cardsToImport.reduce(
+          (sum, card) => sum + (card.quantity || 1),
+          0,
+        );
+        console.log(
+          `Total items to create: ${totalItems} (expanded from ${cardsToImport.length} rows)`,
+        );
+      }
       if (skipDuplicates && duplicates.length > 0) {
         console.log(`Skipping ${duplicates.length} duplicates`);
       }
@@ -477,7 +501,6 @@ export default function TCGPlayerUploadPage() {
             defaultAcquisitionType === "consignment"
               ? customer?.vendorCode || ""
               : "";
-          const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
           const sellPrice = card.marketPrice * (1 + defaultMarkup / 100);
 
           let costBasis = 0;
@@ -487,50 +510,60 @@ export default function TCGPlayerUploadPage() {
             costBasis = card.marketPrice * 0.75;
           }
 
-          const inventoryData: any = {
-            sku: sku,
-            cardName: card.productName,
-            setName: card.setName,
-            cardNumber: card.cardNumber,
-            condition: card.condition,
-            printing: card.printing,
-            language: card.language,
-            quantity: card.quantity,
-            marketPrice: card.marketPrice,
-            sellPrice: sellPrice,
-            costBasis: costBasis,
-            acquisitionType: defaultAcquisitionType,
-            location: defaultLocation,
-            status: "priced",
-            priceSource: "TCGPlayer CSV Import",
-            notes: `Imported from TCGPlayer CSV on ${new Date().toLocaleDateString()}`,
-            batchId: batchId,
-            batchStartTime: startTime,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
+          // Determine how many items to create
+          const itemsToCreate = expandQuantities ? card.quantity || 1 : 1;
+          const quantityPerItem = expandQuantities ? 1 : card.quantity || 1;
 
-          // Log first item being saved for debugging
-          if (i === 0) {
-            console.log("First item being saved to Firebase:", {
-              sku: inventoryData.sku,
-              cardName: inventoryData.cardName,
-              setName: inventoryData.setName,
-            });
+          // Create items (either multiple with qty=1 or one with qty=n)
+          for (let q = 0; q < itemsToCreate; q++) {
+            const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
+
+            const inventoryData: any = {
+              sku: sku,
+              cardName: card.productName,
+              setName: card.setName,
+              cardNumber: card.cardNumber,
+              condition: card.condition,
+              printing: card.printing,
+              language: card.language,
+              quantity: quantityPerItem,
+              marketPrice: card.marketPrice,
+              sellPrice: sellPrice,
+              costBasis: costBasis,
+              acquisitionType: defaultAcquisitionType,
+              location: defaultLocation,
+              status: "priced",
+              priceSource: "TCGPlayer CSV Import",
+              notes: `Imported from TCGPlayer CSV on ${new Date().toLocaleDateString()}`,
+              batchId: batchId,
+              batchStartTime: startTime,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+
+            // Log first item being saved for debugging
+            if (i === 0 && q === 0) {
+              console.log("First item being saved to Firebase:", {
+                sku: inventoryData.sku,
+                cardName: inventoryData.cardName,
+                quantity: inventoryData.quantity,
+                itemsToCreate: itemsToCreate,
+              });
+            }
+
+            if (defaultAcquisitionType === "consignment" && customer) {
+              inventoryData.customerId = selectedCustomerId;
+              inventoryData.customerName = customer.name;
+              inventoryData.customerVendorCode = customer.vendorCode || "";
+              inventoryData.consignorPayoutPercent = 60;
+              inventoryData.consignorOwed = sellPrice * 0.6;
+              inventoryData.consignorPaid = false;
+              inventoryData.consignmentDate = new Date().toISOString();
+            }
+
+            await addDoc(collection(db, "inventory"), inventoryData);
+            successCount++;
           }
-
-          if (defaultAcquisitionType === "consignment" && customer) {
-            inventoryData.customerId = selectedCustomerId;
-            inventoryData.customerName = customer.name;
-            inventoryData.customerVendorCode = customer.vendorCode || "";
-            inventoryData.consignorPayoutPercent = 60;
-            inventoryData.consignorOwed = sellPrice * 0.6;
-            inventoryData.consignorPaid = false;
-            inventoryData.consignmentDate = new Date().toISOString();
-          }
-
-          await addDoc(collection(db, "inventory"), inventoryData);
-          successCount++;
 
           setImportProgress(Math.round(((i + 1) / cardsToImport.length) * 100));
         } catch (error: any) {
@@ -540,14 +573,16 @@ export default function TCGPlayerUploadPage() {
       }
 
       console.log(
-        `✅ Import complete: ${successCount} success, ${errorCount} errors`,
+        `✅ Import complete: ${successCount} items created, ${errorCount} errors`,
       );
       console.log(`Batch ID: ${batchId}`);
 
       if (successCount > 0) {
-        toast.success(
-          `Successfully imported ${successCount} cards!${errorCount > 0 ? ` (${errorCount} errors)` : ""}\n\nBatch: ${batchId}`,
-        );
+        const message = expandQuantities
+          ? `Successfully created ${successCount} items from ${cardsToImport.length} CSV rows!${errorCount > 0 ? ` (${errorCount} errors)` : ""}\n\nBatch: ${batchId}`
+          : `Successfully imported ${successCount} items!${errorCount > 0 ? ` (${errorCount} errors)` : ""}\n\nBatch: ${batchId}`;
+
+        toast.success(message);
       } else {
         toast.error("Import failed. Check console for errors.");
       }
@@ -821,6 +856,46 @@ export default function TCGPlayerUploadPage() {
                   <p className="text-xs text-gray-500 mt-1">
                     Custom name for this batch (leave empty for auto-generated)
                   </p>
+                </div>
+
+                <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="expandQuantities"
+                      checked={expandQuantities}
+                      onChange={(e) => setExpandQuantities(e.target.checked)}
+                      className="mt-1 w-5 h-5"
+                    />
+                    <div className="flex-1">
+                      <label
+                        htmlFor="expandQuantities"
+                        className="font-semibold text-blue-900 cursor-pointer"
+                      >
+                        Create separate items for each quantity
+                      </label>
+                      <p className="text-sm text-blue-800 mt-1">
+                        {expandQuantities ? (
+                          <>
+                            ✅ <strong>Enabled:</strong> If CSV has "Quantity:
+                            5", creates 5 separate items (each with qty=1). Each
+                            gets its own unique SKU.
+                          </>
+                        ) : (
+                          <>
+                            📦 <strong>Disabled:</strong> If CSV has "Quantity:
+                            5", creates 1 item with quantity=5. Single SKU for
+                            all copies.
+                          </>
+                        )}
+                      </p>
+                      <p className="text-xs text-blue-700 mt-2">
+                        <strong>Recommended:</strong> Enable for buy
+                        acquisitions (unique SKUs per condition). Disable for
+                        bulk inventory tracking.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
