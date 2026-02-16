@@ -386,65 +386,41 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        if (showStore) {
-          const y = labelY + (storeY / 100) * height;
-          pdf.setFontSize(storeFontSize);
-          pdf.setFont("helvetica", "bold");
-          pdf.text("VaultTrove", labelX + leftMargin, y);
-        }
-
-        const cardYPos = labelY + (cardY / 100) * height;
-        pdf.setFontSize(cardFontSize);
-        pdf.setFont("helvetica", "bold");
-        pdf.text(
-          (item.cardName || "Unknown").substring(0, 30),
-          labelX + leftMargin,
-          cardYPos,
-        );
-
-        if (showSet) {
-          const setYPos = labelY + (setY / 100) * height;
-          pdf.setFontSize(setFontSize);
-          pdf.setFont("helvetica", "normal");
-          const setInfo = item.setName || "Unknown Set";
-          const printing =
-            item.printing && item.printing !== "Normal"
-              ? ` (${item.printing})`
-              : "";
-          pdf.text(
-            `${setInfo}${printing}`.substring(0, 35),
-            labelX + leftMargin,
-            setYPos,
-          );
-        }
-
+        // TOP: Price and Condition (Large, prominent)
         const priceYPos = labelY + (priceY / 100) * height;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
         pdf.text(
-          `${item.condition || "NM"}  $${(item.sellPrice || 0).toFixed(2)}`,
-          labelX + leftMargin,
+          `$${(item.sellPrice || 0).toFixed(2)}`,
+          labelX + width / 2,
           priceYPos,
+          { align: "center" },
         );
 
-        // Barcode - ✅ Using item.sku which now contains correct SKU from database
+        // Condition right below price
+        const conditionYPos = priceYPos + 0.15;
+        pdf.setFontSize(priceFontSize - 2);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(item.condition || "NM", labelX + width / 2, conditionYPos, {
+          align: "center",
+        });
+
+        // MIDDLE: QR Code or Barcode (Centered, larger)
         const barcodeYPos = labelY + (barcodeY / 100) * height;
         try {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
             bcid: useQRCode ? "qrcode" : "code128",
-            text: item.sku, // ✅ Correct SKU from database
-            scale: useQRCode ? 2 : 3,
-            height: useQRCode ? undefined : 8,
+            text: item.sku,
+            scale: useQRCode ? 3 : 3,
+            height: useQRCode ? 10 : 8,
             includetext: false,
           });
           const img = canvas.toDataURL("image/png");
 
-          const codeWidth = useQRCode ? height * 0.25 : width * 0.85;
-          const codeHeight = useQRCode ? height * 0.25 : height * 0.12;
-          const codeX = useQRCode
-            ? labelX + (width - codeWidth) / 2
-            : labelX + leftMargin;
+          const codeWidth = useQRCode ? height * 0.35 : width * 0.85;
+          const codeHeight = useQRCode ? height * 0.35 : height * 0.12;
+          const codeX = labelX + (width - codeWidth) / 2;
 
           pdf.addImage(
             img,
@@ -456,6 +432,43 @@ export default function LabelsPage() {
           );
         } catch (e) {
           console.error(useQRCode ? "QR code error:" : "Barcode error:", e);
+        }
+
+        // BOTTOM: Card Name
+        const cardYPos = labelY + (cardY / 100) * height;
+        pdf.setFontSize(cardFontSize);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(
+          (item.cardName || "Unknown").substring(0, 30),
+          labelX + width / 2,
+          cardYPos,
+          { align: "center" },
+        );
+
+        // Set Name (if shown)
+        if (showSet) {
+          const setYPos = labelY + (setY / 100) * height;
+          pdf.setFontSize(setFontSize);
+          pdf.setFont("helvetica", "normal");
+          const setInfo = item.setName || "Unknown Set";
+          const printing =
+            item.printing && item.printing !== "Normal"
+              ? ` (${item.printing})`
+              : "";
+          pdf.text(
+            `${setInfo}${printing}`.substring(0, 35),
+            labelX + width / 2,
+            setYPos,
+            { align: "center" },
+          );
+        }
+
+        // Store name (if shown)
+        if (showStore) {
+          const y = labelY + (storeY / 100) * height;
+          pdf.setFontSize(storeFontSize);
+          pdf.setFont("helvetica", "bold");
+          pdf.text("VaultTrove", labelX + width / 2, y, { align: "center" });
         }
 
         // SKU - ✅ Using item.sku which now contains correct SKU from database
@@ -619,65 +632,33 @@ export default function LabelsPage() {
                     ))}
                   </div>
 
-                  {/* Store Name */}
-                  {showStore && (
-                    <div
-                      className="absolute w-full text-center font-bold"
-                      style={{
-                        top: `${storeY}%`,
-                        fontSize: `${storeFontSize}px`,
-                        transform: "translateY(-50%)",
-                        lineHeight: 1.1,
-                      }}
-                    >
-                      Your Store Name
-                    </div>
-                  )}
-
-                  {/* Card Name */}
-                  <div
-                    className="absolute w-full text-center font-bold"
-                    style={{
-                      top: `${cardY}%`,
-                      fontSize: `${cardFontSize}px`,
-                      transform: "translateY(-50%)",
-                      paddingLeft: "4px",
-                      paddingRight: "4px",
-                      lineHeight: 1.1,
-                    }}
-                  >
-                    Monkey.D.Luffy
-                  </div>
-
-                  {/* Set Name */}
-                  {showSet && (
-                    <div
-                      className="absolute w-full text-center text-gray-600"
-                      style={{
-                        top: `${setY}%`,
-                        fontSize: `${setFontSize}px`,
-                        transform: "translateY(-50%)",
-                        lineHeight: 1.1,
-                      }}
-                    >
-                      Romance Dawn
-                    </div>
-                  )}
-
-                  {/* Price */}
+                  {/* TOP: Price (Large, centered) */}
                   <div
                     className="absolute w-full text-center font-black"
                     style={{
                       top: `${priceY}%`,
                       fontSize: `${priceFontSize}px`,
                       transform: "translateY(-50%)",
-                      lineHeight: 1.1,
+                      lineHeight: 1,
                     }}
                   >
                     $10.00
                   </div>
 
-                  {/* Barcode or QR Code */}
+                  {/* Condition below price */}
+                  <div
+                    className="absolute w-full text-center font-bold"
+                    style={{
+                      top: `${priceY + 12}%`,
+                      fontSize: `${priceFontSize - 2}px`,
+                      transform: "translateY(-50%)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    NM
+                  </div>
+
+                  {/* MIDDLE: Barcode or QR Code (Centered, larger) */}
                   <div
                     className="absolute left-1/2 flex flex-col items-center"
                     style={{
@@ -686,20 +667,20 @@ export default function LabelsPage() {
                     }}
                   >
                     {useQRCode ? (
-                      /* QR Code Placeholder */
+                      /* QR Code Placeholder - BIGGER */
                       <div
                         className="border-2 border-black"
                         style={{
-                          width: `${height * 20}px`,
-                          height: `${height * 20}px`,
+                          width: `${height * 28}px`,
+                          height: `${height * 28}px`,
                           display: "grid",
-                          gridTemplateColumns: "repeat(5, 1fr)",
-                          gridTemplateRows: "repeat(5, 1fr)",
+                          gridTemplateColumns: "repeat(7, 1fr)",
+                          gridTemplateRows: "repeat(7, 1fr)",
                           gap: "1px",
                           backgroundColor: "black",
                         }}
                       >
-                        {Array.from({ length: 25 }).map((_, i) => (
+                        {Array.from({ length: 49 }).map((_, i) => (
                           <div
                             key={i}
                             className={
@@ -725,6 +706,51 @@ export default function LabelsPage() {
                       </div>
                     )}
                   </div>
+
+                  {/* BOTTOM: Card Name (centered) */}
+                  <div
+                    className="absolute w-full text-center font-bold"
+                    style={{
+                      top: `${cardY}%`,
+                      fontSize: `${cardFontSize}px`,
+                      transform: "translateY(-50%)",
+                      paddingLeft: "4px",
+                      paddingRight: "4px",
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    Monkey.D.Luffy
+                  </div>
+
+                  {/* Set Name (centered) */}
+                  {showSet && (
+                    <div
+                      className="absolute w-full text-center text-gray-600"
+                      style={{
+                        top: `${setY}%`,
+                        fontSize: `${setFontSize}px`,
+                        transform: "translateY(-50%)",
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      Romance Dawn
+                    </div>
+                  )}
+
+                  {/* Store Name (centered, top) */}
+                  {showStore && (
+                    <div
+                      className="absolute w-full text-center font-bold"
+                      style={{
+                        top: `${storeY}%`,
+                        fontSize: `${storeFontSize}px`,
+                        transform: "translateY(-50%)",
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      Your Store Name
+                    </div>
+                  )}
 
                   {/* SKU */}
                   <div
