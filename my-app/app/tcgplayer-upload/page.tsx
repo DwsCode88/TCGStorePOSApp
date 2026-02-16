@@ -501,6 +501,10 @@ export default function TCGPlayerUploadPage() {
             defaultAcquisitionType === "consignment"
               ? customer?.vendorCode || ""
               : "";
+
+          // Generate SKU ONCE (same SKU for all copies of this card)
+          const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
+
           const sellPrice = card.marketPrice * (1 + defaultMarkup / 100);
 
           let costBasis = 0;
@@ -515,11 +519,10 @@ export default function TCGPlayerUploadPage() {
           const quantityPerItem = expandQuantities ? 1 : card.quantity || 1;
 
           // Create items (either multiple with qty=1 or one with qty=n)
+          // All copies use the SAME SKU
           for (let q = 0; q < itemsToCreate; q++) {
-            const sku = generateSKU(card, vendorCode, defaultAcquisitionType);
-
             const inventoryData: any = {
-              sku: sku,
+              sku: sku, // ✅ Same SKU for all copies
               cardName: card.productName,
               setName: card.setName,
               cardNumber: card.cardNumber,
@@ -548,6 +551,10 @@ export default function TCGPlayerUploadPage() {
                 cardName: inventoryData.cardName,
                 quantity: inventoryData.quantity,
                 itemsToCreate: itemsToCreate,
+                note:
+                  itemsToCreate > 1
+                    ? `Creating ${itemsToCreate} items with same SKU`
+                    : "Creating 1 item",
               });
             }
 
@@ -877,22 +884,20 @@ export default function TCGPlayerUploadPage() {
                       <p className="text-sm text-blue-800 mt-1">
                         {expandQuantities ? (
                           <>
-                            ✅ <strong>Enabled:</strong> If CSV has "Quantity:
-                            5", creates 5 separate items (each with qty=1). Each
-                            gets its own unique SKU.
+                            ✅ <strong>Enabled:</strong> Quantity 5 → Creates 5
+                            separate items (each qty=1). All use the{" "}
+                            <strong>same SKU</strong>.
                           </>
                         ) : (
                           <>
-                            📦 <strong>Disabled:</strong> If CSV has "Quantity:
-                            5", creates 1 item with quantity=5. Single SKU for
-                            all copies.
+                            📦 <strong>Disabled:</strong> Quantity 5 → Creates 1
+                            item with quantity=5.
                           </>
                         )}
                       </p>
                       <p className="text-xs text-blue-700 mt-2">
-                        <strong>Recommended:</strong> Enable for buy
-                        acquisitions (unique SKUs per condition). Disable for
-                        bulk inventory tracking.
+                        <strong>Example:</strong> Franky qty=2 → Creates 2
+                        items, both with SKU "OP01-021-NM"
                       </p>
                     </div>
                   </div>
