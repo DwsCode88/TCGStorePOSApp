@@ -18,7 +18,7 @@ export default function LabelsPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  
+
   // Batch filtering
   const [selectedBatch, setSelectedBatch] = useState<string>("priced-only");
   const [batches, setBatches] = useState<string[]>([]);
@@ -49,7 +49,7 @@ export default function LabelsPage() {
   // Show/hide
   const [showStore, setShowStore] = useState(true);
   const [showSet, setShowSet] = useState(true);
-  
+
   // Label options
   const [useQRCode, setUseQRCode] = useState(false); // QR code instead of barcode
   const [verticalOrientation, setVerticalOrientation] = useState(false); // Rotate 90 degrees
@@ -116,8 +116,6 @@ export default function LabelsPage() {
       useQRCode,
       verticalOrientation,
     };
-      onePerPage,
-    };
     localStorage.setItem("labelLayout", JSON.stringify(layout));
     toast.success("Layout saved! It will load automatically next time.");
     console.log("💾 Saved layout:", layout);
@@ -153,13 +151,13 @@ export default function LabelsPage() {
     try {
       console.log("📦 Loading inventory from Firebase...");
       const snapshot = await getDocs(collection(db, "inventory"));
-      
+
       // ✅ FIXED: Use SKU from database, not doc ID
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
         return {
           ...data,
-          id: doc.id,              // Keep doc ID for updates
+          id: doc.id, // Keep doc ID for updates
           sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
         };
       }) as InventoryItem[];
@@ -179,11 +177,7 @@ export default function LabelsPage() {
 
       // Extract unique batch IDs
       const uniqueBatches = Array.from(
-        new Set(
-          loadedItems
-            .map((item) => item.batchId)
-            .filter((id) => id)
-        )
+        new Set(loadedItems.map((item) => item.batchId).filter((id) => id)),
       ).sort((a, b) => b.localeCompare(a)); // Most recent first
 
       setBatches(uniqueBatches);
@@ -204,13 +198,18 @@ export default function LabelsPage() {
     }
   };
 
-  const filterItemsByBatch = (itemsToFilter: InventoryItem[], batchFilter: string) => {
+  const filterItemsByBatch = (
+    itemsToFilter: InventoryItem[],
+    batchFilter: string,
+  ) => {
     let filtered: InventoryItem[];
 
     if (batchFilter === "priced-only") {
       // Show only items that need labels (status: priced)
       filtered = itemsToFilter.filter((item) => item.status === "priced");
-      console.log(`🏷️ Filtered to ${filtered.length} items that need labels (priced)`);
+      console.log(
+        `🏷️ Filtered to ${filtered.length} items that need labels (priced)`,
+      );
     } else if (batchFilter === "all") {
       // Show all items
       filtered = itemsToFilter;
@@ -218,7 +217,9 @@ export default function LabelsPage() {
     } else {
       // Filter by specific batch
       filtered = itemsToFilter.filter((item) => item.batchId === batchFilter);
-      console.log(`📦 Filtered to batch ${batchFilter}: ${filtered.length} items`);
+      console.log(
+        `📦 Filtered to batch ${batchFilter}: ${filtered.length} items`,
+      );
     }
 
     setItems(
@@ -318,12 +319,16 @@ export default function LabelsPage() {
 
       const labelWidthWithMargin = width + spacing;
       const labelHeightWithMargin = height + spacing;
-      
+
       // Swap dimensions for vertical orientation
       const effectiveWidth = verticalOrientation ? height : width;
       const effectiveHeight = verticalOrientation ? width : height;
-      const effectiveWidthWithMargin = verticalOrientation ? labelHeightWithMargin : labelWidthWithMargin;
-      const effectiveHeightWithMargin = verticalOrientation ? labelWidthWithMargin : labelHeightWithMargin;
+      const effectiveWidthWithMargin = verticalOrientation
+        ? labelHeightWithMargin
+        : labelWidthWithMargin;
+      const effectiveHeightWithMargin = verticalOrientation
+        ? labelWidthWithMargin
+        : labelHeightWithMargin;
 
       let labelsPerRow, labelsPerCol, labelsPerPage;
 
@@ -331,7 +336,9 @@ export default function LabelsPage() {
         labelsPerRow = 1;
         labelsPerCol = 1;
         labelsPerPage = 1;
-        console.log(`📄 ONE LABEL PER PAGE mode${verticalOrientation ? ' (VERTICAL)' : ''}`);
+        console.log(
+          `📄 ONE LABEL PER PAGE mode${verticalOrientation ? " (VERTICAL)" : ""}`,
+        );
       } else {
         labelsPerRow = Math.floor(8.5 / effectiveWidthWithMargin);
         labelsPerCol = Math.floor(11 / effectiveHeightWithMargin);
@@ -426,17 +433,19 @@ export default function LabelsPage() {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
             bcid: useQRCode ? "qrcode" : "code128",
-            text: item.sku,  // ✅ Correct SKU from database
+            text: item.sku, // ✅ Correct SKU from database
             scale: useQRCode ? 2 : 3,
             height: useQRCode ? undefined : 8,
             includetext: false,
           });
           const img = canvas.toDataURL("image/png");
-          
+
           const codeWidth = useQRCode ? height * 0.25 : width * 0.85;
           const codeHeight = useQRCode ? height * 0.25 : height * 0.12;
-          const codeX = useQRCode ? labelX + (width - codeWidth) / 2 : labelX + leftMargin;
-          
+          const codeX = useQRCode
+            ? labelX + (width - codeWidth) / 2
+            : labelX + leftMargin;
+
           pdf.addImage(
             img,
             "PNG",
@@ -453,7 +462,7 @@ export default function LabelsPage() {
         const skuYPos = labelY + (skuY / 100) * height;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" });  // ✅ Correct SKU
+        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" }); // ✅ Correct SKU
       }
 
       const pdfBlob = pdf.output("blob");
@@ -469,7 +478,8 @@ export default function LabelsPage() {
       // ✅ FIXED: Use item.id (document ID) for updateDoc, not item.sku
       await Promise.all(
         itemsToLabel.map((item) =>
-          updateDoc(doc(db, "inventory", item.id || item.sku), {  // ✅ Use doc ID
+          updateDoc(doc(db, "inventory", item.id || item.sku), {
+            // ✅ Use doc ID
             status: "labeled",
             updatedAt: new Date(),
           }),
@@ -506,12 +516,11 @@ export default function LabelsPage() {
       <div className="max-w-7xl mx-auto">
         <h1 className="text-4xl font-bold mb-2">Print Labels</h1>
         <p className="text-gray-600 mb-4">
-          {selectedBatch === "priced-only" 
+          {selectedBatch === "priced-only"
             ? "Showing only items that need labels (status: priced)"
             : selectedBatch === "all"
-            ? "Showing all items"
-            : `Showing items from batch: ${selectedBatch}`
-          }
+              ? "Showing all items"
+              : `Showing items from batch: ${selectedBatch}`}
         </p>
 
         {/* Batch Filter */}
@@ -549,24 +558,21 @@ export default function LabelsPage() {
               {selectedBatch === "priced-only" ? "✅" : "📦"}
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              {selectedBatch === "priced-only" 
+              {selectedBatch === "priced-only"
                 ? "All caught up!"
-                : "No items found"
-              }
+                : "No items found"}
             </h2>
             <p className="text-gray-600 mb-4">
               {selectedBatch === "priced-only"
                 ? "No items need labels. All priced items have already been labeled."
                 : selectedBatch === "all"
-                ? "No items in inventory."
-                : `No items found in batch: ${selectedBatch}`
-              }
+                  ? "No items in inventory."
+                  : `No items found in batch: ${selectedBatch}`}
             </p>
             <p className="text-sm text-gray-500">
               {selectedBatch === "priced-only"
                 ? "Add new items or check the inventory page to see labeled items."
-                : "Try selecting a different batch from the filter above."
-              }
+                : "Try selecting a different batch from the filter above."}
             </p>
           </div>
         )}
@@ -576,26 +582,32 @@ export default function LabelsPage() {
             {/* Label Preview */}
             <div className="bg-white rounded-lg shadow p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold">📋 Label Designer & Preview</h2>
+                <h2 className="text-xl font-semibold">
+                  📋 Label Designer & Preview
+                </h2>
                 <div className="text-sm text-gray-600">
                   Adjust settings below to update preview in real-time
                 </div>
               </div>
-              
+
               <div className="flex justify-center items-center bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg p-8 mb-4">
-                <div 
+                <div
                   className="bg-white border-4 border-gray-800 shadow-2xl relative overflow-hidden"
-                  style={{ 
-                    width: verticalOrientation ? `${height * 96}px` : `${width * 96}px`,
-                    height: verticalOrientation ? `${width * 96}px` : `${height * 96}px`,
-                    transform: verticalOrientation ? 'rotate(90deg)' : 'none',
-                    transformOrigin: 'center',
+                  style={{
+                    width: verticalOrientation
+                      ? `${height * 96}px`
+                      : `${width * 96}px`,
+                    height: verticalOrientation
+                      ? `${width * 96}px`
+                      : `${height * 96}px`,
+                    transform: verticalOrientation ? "rotate(90deg)" : "none",
+                    transformOrigin: "center",
                   }}
                 >
                   {/* Position Guide Lines (only show in preview) */}
                   <div className="absolute inset-0 pointer-events-none opacity-20">
-                    {[0, 25, 50, 75, 100].map(percent => (
-                      <div 
+                    {[0, 25, 50, 75, 100].map((percent) => (
+                      <div
                         key={percent}
                         className="absolute w-full border-t border-blue-300 border-dashed"
                         style={{ top: `${percent}%` }}
@@ -609,12 +621,12 @@ export default function LabelsPage() {
 
                   {/* Store Name */}
                   {showStore && (
-                    <div 
+                    <div
                       className="absolute w-full text-center font-bold"
-                      style={{ 
+                      style={{
                         top: `${storeY}%`,
                         fontSize: `${storeFontSize}px`,
-                        transform: 'translateY(-50%)',
+                        transform: "translateY(-50%)",
                         lineHeight: 1.1,
                       }}
                     >
@@ -623,14 +635,14 @@ export default function LabelsPage() {
                   )}
 
                   {/* Card Name */}
-                  <div 
+                  <div
                     className="absolute w-full text-center font-bold"
-                    style={{ 
+                    style={{
                       top: `${cardY}%`,
                       fontSize: `${cardFontSize}px`,
-                      transform: 'translateY(-50%)',
-                      paddingLeft: '4px',
-                      paddingRight: '4px',
+                      transform: "translateY(-50%)",
+                      paddingLeft: "4px",
+                      paddingRight: "4px",
                       lineHeight: 1.1,
                     }}
                   >
@@ -639,12 +651,12 @@ export default function LabelsPage() {
 
                   {/* Set Name */}
                   {showSet && (
-                    <div 
+                    <div
                       className="absolute w-full text-center text-gray-600"
-                      style={{ 
+                      style={{
                         top: `${setY}%`,
                         fontSize: `${setFontSize}px`,
-                        transform: 'translateY(-50%)',
+                        transform: "translateY(-50%)",
                         lineHeight: 1.1,
                       }}
                     >
@@ -653,12 +665,12 @@ export default function LabelsPage() {
                   )}
 
                   {/* Price */}
-                  <div 
+                  <div
                     className="absolute w-full text-center font-black"
-                    style={{ 
+                    style={{
                       top: `${priceY}%`,
                       fontSize: `${priceFontSize}px`,
-                      transform: 'translateY(-50%)',
+                      transform: "translateY(-50%)",
                       lineHeight: 1.1,
                     }}
                   >
@@ -666,42 +678,47 @@ export default function LabelsPage() {
                   </div>
 
                   {/* Barcode or QR Code */}
-                  <div 
+                  <div
                     className="absolute left-1/2 flex flex-col items-center"
-                    style={{ 
+                    style={{
                       top: `${barcodeY}%`,
-                      transform: 'translate(-50%, -50%)'
+                      transform: "translate(-50%, -50%)",
                     }}
                   >
                     {useQRCode ? (
                       /* QR Code Placeholder */
-                      <div className="border-2 border-black" style={{
-                        width: `${height * 20}px`,
-                        height: `${height * 20}px`,
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(5, 1fr)',
-                        gridTemplateRows: 'repeat(5, 1fr)',
-                        gap: '1px',
-                        backgroundColor: 'black',
-                      }}>
-                        {Array.from({length: 25}).map((_, i) => (
-                          <div 
-                            key={i} 
-                            className={Math.random() > 0.5 ? 'bg-black' : 'bg-white'}
+                      <div
+                        className="border-2 border-black"
+                        style={{
+                          width: `${height * 20}px`,
+                          height: `${height * 20}px`,
+                          display: "grid",
+                          gridTemplateColumns: "repeat(5, 1fr)",
+                          gridTemplateRows: "repeat(5, 1fr)",
+                          gap: "1px",
+                          backgroundColor: "black",
+                        }}
+                      >
+                        {Array.from({ length: 25 }).map((_, i) => (
+                          <div
+                            key={i}
+                            className={
+                              Math.random() > 0.5 ? "bg-black" : "bg-white"
+                            }
                           />
                         ))}
                       </div>
                     ) : (
                       /* Barcode Placeholder */
                       <div className="flex gap-px">
-                        {Array.from({length: 24}).map((_, i) => (
-                          <div 
-                            key={i} 
+                        {Array.from({ length: 24 }).map((_, i) => (
+                          <div
+                            key={i}
                             className="bg-black"
                             style={{
-                              width: i % 5 === 0 ? '3px' : '2px',
+                              width: i % 5 === 0 ? "3px" : "2px",
                               height: `${height * 16}px`,
-                              opacity: Math.random() > 0.2 ? 1 : 0
+                              opacity: Math.random() > 0.2 ? 1 : 0,
                             }}
                           />
                         ))}
@@ -710,12 +727,12 @@ export default function LabelsPage() {
                   </div>
 
                   {/* SKU */}
-                  <div 
+                  <div
                     className="absolute w-full text-center font-mono"
-                    style={{ 
+                    style={{
                       top: `${skuY}%`,
                       fontSize: `${skuFontSize}px`,
-                      transform: 'translateY(-50%)',
+                      transform: "translateY(-50%)",
                       lineHeight: 1.1,
                     }}
                   >
@@ -738,7 +755,8 @@ export default function LabelsPage() {
                     {width}" × {height}"
                   </div>
                   <div className="text-blue-600 text-xs mt-1">
-                    {(width * 2.54).toFixed(1)}cm × {(height * 2.54).toFixed(1)}cm
+                    {(width * 2.54).toFixed(1)}cm × {(height * 2.54).toFixed(1)}
+                    cm
                   </div>
                 </div>
                 <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4">
@@ -752,8 +770,10 @@ export default function LabelsPage() {
                       showSet && "Set",
                       "Price",
                       "Barcode",
-                      "SKU"
-                    ].filter(Boolean).join(", ")}
+                      "SKU",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
                   </div>
                 </div>
                 <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
@@ -774,12 +794,25 @@ export default function LabelsPage() {
                 <div className="flex items-start gap-2">
                   <span className="text-xl">💡</span>
                   <div className="flex-1">
-                    <div className="font-semibold text-amber-900 mb-1">Quick Tips:</div>
+                    <div className="font-semibold text-amber-900 mb-1">
+                      Quick Tips:
+                    </div>
                     <ul className="text-sm text-amber-800 space-y-1">
-                      <li>• <strong>Y Position (%)</strong> = Vertical position from top (0% = top, 100% = bottom)</li>
-                      <li>• <strong>Font Size (pt)</strong> = Text size in points (larger = bigger text)</li>
-                      <li>• Click <strong>💾 Save Layout</strong> to remember your settings</li>
-                      <li>• Guide lines show 0%, 25%, 50%, 75%, 100% positions</li>
+                      <li>
+                        • <strong>Y Position (%)</strong> = Vertical position
+                        from top (0% = top, 100% = bottom)
+                      </li>
+                      <li>
+                        • <strong>Font Size (pt)</strong> = Text size in points
+                        (larger = bigger text)
+                      </li>
+                      <li>
+                        • Click <strong>💾 Save Layout</strong> to remember your
+                        settings
+                      </li>
+                      <li>
+                        • Guide lines show 0%, 25%, 50%, 75%, 100% positions
+                      </li>
                     </ul>
                   </div>
                 </div>
@@ -808,14 +841,17 @@ export default function LabelsPage() {
                     </>
                   ) : selectedBatch === "all" ? (
                     <>
-                      <strong>ℹ️ Showing all items</strong> -
-                      Including already labeled items. Use this to reprint labels for any item.
+                      <strong>ℹ️ Showing all items</strong> - Including already
+                      labeled items. Use this to reprint labels for any item.
                     </>
                   ) : (
                     <>
-                      <strong>ℹ️ Batch Filter Active</strong> -
-                      Showing items from batch: <code className="bg-blue-100 px-1 py-0.5 rounded">{selectedBatch}</code>.
-                      You can reprint labels for these items.
+                      <strong>ℹ️ Batch Filter Active</strong> - Showing items
+                      from batch:{" "}
+                      <code className="bg-blue-100 px-1 py-0.5 rounded">
+                        {selectedBatch}
+                      </code>
+                      . You can reprint labels for these items.
                     </>
                   )}
                 </div>
@@ -1060,7 +1096,7 @@ export default function LabelsPage() {
                 {/* Label Options */}
                 <div className="bg-white rounded-lg shadow p-4">
                   <h3 className="font-semibold mb-3">Label Options</h3>
-                  
+
                   <div className="space-y-3">
                     {/* QR Code Toggle */}
                     <div className="flex items-center gap-3 p-3 border-2 rounded-lg hover:border-blue-300 transition-colors">
@@ -1072,14 +1108,16 @@ export default function LabelsPage() {
                         className="w-5 h-5"
                       />
                       <div className="flex-1">
-                        <label htmlFor="useQRCode" className="font-semibold cursor-pointer block">
-                          {useQRCode ? '📱 QR Code' : '📊 Barcode'}
+                        <label
+                          htmlFor="useQRCode"
+                          className="font-semibold cursor-pointer block"
+                        >
+                          {useQRCode ? "📱 QR Code" : "📊 Barcode"}
                         </label>
                         <p className="text-xs text-gray-600 mt-1">
-                          {useQRCode 
-                            ? 'Using QR code (scannable with phone cameras)'
-                            : 'Using traditional barcode'
-                          }
+                          {useQRCode
+                            ? "Using QR code (scannable with phone cameras)"
+                            : "Using traditional barcode"}
                         </p>
                       </div>
                     </div>
@@ -1090,18 +1128,24 @@ export default function LabelsPage() {
                         type="checkbox"
                         id="verticalOrientation"
                         checked={verticalOrientation}
-                        onChange={(e) => setVerticalOrientation(e.target.checked)}
+                        onChange={(e) =>
+                          setVerticalOrientation(e.target.checked)
+                        }
                         className="w-5 h-5"
                       />
                       <div className="flex-1">
-                        <label htmlFor="verticalOrientation" className="font-semibold cursor-pointer block">
-                          {verticalOrientation ? '📱 Vertical (90°)' : '📏 Horizontal'}
+                        <label
+                          htmlFor="verticalOrientation"
+                          className="font-semibold cursor-pointer block"
+                        >
+                          {verticalOrientation
+                            ? "📱 Vertical (90°)"
+                            : "📏 Horizontal"}
                         </label>
                         <p className="text-xs text-gray-600 mt-1">
-                          {verticalOrientation 
-                            ? 'Label rotated 90° for vertical cards'
-                            : 'Standard horizontal layout'
-                          }
+                          {verticalOrientation
+                            ? "Label rotated 90° for vertical cards"
+                            : "Standard horizontal layout"}
                         </p>
                       </div>
                     </div>
@@ -1116,7 +1160,7 @@ export default function LabelsPage() {
                         setWidth(2.0);
                         setHeight(1.0);
                       }}
-                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.0 && height === 1.0 ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.0 && height === 1.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
                     >
                       Standard
                       <br />
@@ -1127,7 +1171,7 @@ export default function LabelsPage() {
                         setWidth(2.625);
                         setHeight(1.0);
                       }}
-                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.625 && height === 1.0 ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 2.625 && height === 1.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
                     >
                       Avery 5160
                       <br />
@@ -1138,7 +1182,7 @@ export default function LabelsPage() {
                         setWidth(4.0);
                         setHeight(2.0);
                       }}
-                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 4.0 && height === 2.0 ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+                      className={`p-2 border-2 rounded hover:bg-gray-50 text-sm transition-colors ${width === 4.0 && height === 2.0 ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
                     >
                       Thermal
                       <br />
