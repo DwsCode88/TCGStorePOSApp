@@ -386,18 +386,6 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        // Helper function to transform coordinates for rotation
-        const transformCoords = (x: number, y: number) => {
-          if (verticalOrientation) {
-            // Rotate 90° clockwise: new_x = y, new_y = width - x
-            return {
-              x: labelX + y - labelY,
-              y: labelY + width - (x - labelX),
-            };
-          }
-          return { x, y };
-        };
-
         // Helper function to add rotated text
         const addText = (
           text: string,
@@ -406,39 +394,12 @@ export default function LabelsPage() {
           options: any = {},
         ) => {
           if (verticalOrientation) {
-            const coords = transformCoords(x, y);
-            pdf.text(text, coords.x, coords.y, { ...options, angle: 90 });
+            // For 90° rotation: swap X and Y, add angle
+            const rotatedX = labelX + (y - labelY);
+            const rotatedY = labelY + width - (x - labelX);
+            pdf.text(text, rotatedX, rotatedY, { ...options, angle: 90 });
           } else {
             pdf.text(text, x, y, options);
-          }
-        };
-
-        // Helper function to add rotated image
-        const addRotatedImage = (
-          img: string,
-          x: number,
-          y: number,
-          w: number,
-          h: number,
-        ) => {
-          if (verticalOrientation) {
-            pdf.saveGraphicsState();
-            // Translate and rotate
-            const rotX = labelX + (y - labelY) + h / 2;
-            const rotY = labelY + width - (x - labelX) - w / 2;
-            pdf.setGState(new pdf.GState());
-            // Move to position, rotate, draw
-            const pageHeight = 11; // Letter size
-            pdf.internal.write(`q`); // Save state
-            pdf.internal.write(
-              `${h} 0 0 ${w} ${rotX * 72} ${(pageHeight - rotY) * 72} cm`,
-            ); // Position and size
-            pdf.internal.write(`0 -1 1 0 -0.5 0.5 cm`); // Rotate 90°
-            pdf.addImage(img, "PNG", 0, 0, 1, 1);
-            pdf.internal.write(`Q`); // Restore state
-            pdf.restoreGraphicsState();
-          } else {
-            pdf.addImage(img, "PNG", x, y, w, h);
           }
         };
 
@@ -476,14 +437,16 @@ export default function LabelsPage() {
             ? renderHeight * 0.35
             : renderHeight * 0.12;
           const codeX = labelX + (renderWidth - codeWidth) / 2;
+          const codeY = barcodeYPos - (useQRCode ? codeHeight / 2 : 0);
 
-          addRotatedImage(
-            img,
-            codeX,
-            barcodeYPos - (useQRCode ? codeHeight / 2 : 0),
-            codeWidth,
-            codeHeight,
-          );
+          if (verticalOrientation) {
+            // Rotate coordinates for vertical orientation
+            const rotatedX = labelX + (codeY - labelY);
+            const rotatedY = labelY + width - (codeX - labelX) - codeWidth;
+            pdf.addImage(img, "PNG", rotatedX, rotatedY, codeHeight, codeWidth);
+          } else {
+            pdf.addImage(img, "PNG", codeX, codeY, codeWidth, codeHeight);
+          }
         } catch (e) {
           console.error(useQRCode ? "QR code error:" : "Barcode error:", e);
         }
