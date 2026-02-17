@@ -386,24 +386,16 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        // TOP: Price and Condition (Large, prominent)
+        // TOP: Price and Condition on SAME LINE
         const priceYPos = labelY + (priceY / 100) * height;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
         pdf.text(
-          `$${(item.sellPrice || 0).toFixed(2)}`,
+          `$${(item.sellPrice || 0).toFixed(2)}  ${item.condition || "NM"}`,
           labelX + width / 2,
           priceYPos,
           { align: "center" },
         );
-
-        // Condition right below price
-        const conditionYPos = priceYPos + 0.15;
-        pdf.setFontSize(priceFontSize - 2);
-        pdf.setFont("helvetica", "bold");
-        pdf.text(item.condition || "NM", labelX + width / 2, conditionYPos, {
-          align: "center",
-        });
 
         // MIDDLE: QR Code or Barcode (Centered, larger)
         const barcodeYPos = labelY + (barcodeY / 100) * height;
