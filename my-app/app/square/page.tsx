@@ -61,14 +61,10 @@ export default function SquareSyncPage() {
       const snapshot = await getDocs(collection(db, "inventory"));
       console.log("✅ Got snapshot:", snapshot.size, "items");
 
-      const loadedItems = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          ...data,
-          id: doc.id, // Keep doc ID for updates
-          sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
-        };
-      }) as InventoryItem[];
+      const loadedItems = snapshot.docs.map((doc) => ({
+        ...doc.data(),
+        sku: doc.id,
+      })) as InventoryItem[];
 
       console.log("📋 All items:", loadedItems.length);
 
@@ -142,8 +138,6 @@ export default function SquareSyncPage() {
 
   const syncItemToSquare = async (item: InventoryItem) => {
     console.log(`📤 Syncing: ${item.cardName}`);
-    console.log(`   SKU: ${item.sku}`);
-    console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
 
     // Call our API route (server-side) instead of Square directly
     const response = await fetch("/api/square/sync", {
@@ -155,7 +149,7 @@ export default function SquareSyncPage() {
         accessToken: squareAccessToken,
         locationId: squareLocationId,
         item: {
-          sku: item.sku, // ✅ Now uses correct SKU from database
+          sku: item.sku,
           cardName: item.cardName,
           setName: item.setName,
           printing: item.printing,
@@ -175,9 +169,8 @@ export default function SquareSyncPage() {
     const result = await response.json();
     console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
 
-    // Update Firebase with Square ID using document ID
-    const docId = (item as any).id || item.sku; // Use stored doc ID or fallback to SKU
-    await updateDoc(doc(db, "inventory", docId), {
+    // Update Firebase with Square ID
+    await updateDoc(doc(db, "inventory", item.sku), {
       status: "listed",
       squareItemId: result.squareItemId,
       squareVariationId: result.squareVariationId,
