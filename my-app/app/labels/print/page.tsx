@@ -386,19 +386,23 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
+        // For vertical orientation, we'll use width/height as-is but rotate the final rendering
+        const renderWidth = verticalOrientation ? height : width;
+        const renderHeight = verticalOrientation ? width : height;
+
         // TOP: Price and Condition on SAME LINE
-        const priceYPos = labelY + (priceY / 100) * height;
+        const priceYPos = labelY + (priceY / 100) * renderHeight;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
         pdf.text(
           `$${(item.sellPrice || 0).toFixed(2)}  ${item.condition || "NM"}`,
-          labelX + width / 2,
+          labelX + renderWidth / 2,
           priceYPos,
           { align: "center" },
         );
 
         // MIDDLE: QR Code or Barcode (Centered, larger)
-        const barcodeYPos = labelY + (barcodeY / 100) * height;
+        const barcodeYPos = labelY + (barcodeY / 100) * renderHeight;
         try {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
@@ -410,9 +414,13 @@ export default function LabelsPage() {
           });
           const img = canvas.toDataURL("image/png");
 
-          const codeWidth = useQRCode ? height * 0.35 : width * 0.85;
-          const codeHeight = useQRCode ? height * 0.35 : height * 0.12;
-          const codeX = labelX + (width - codeWidth) / 2;
+          const codeWidth = useQRCode
+            ? renderHeight * 0.35
+            : renderWidth * 0.85;
+          const codeHeight = useQRCode
+            ? renderHeight * 0.35
+            : renderHeight * 0.12;
+          const codeX = labelX + (renderWidth - codeWidth) / 2;
 
           pdf.addImage(
             img,
@@ -427,19 +435,19 @@ export default function LabelsPage() {
         }
 
         // BOTTOM: Card Name
-        const cardYPos = labelY + (cardY / 100) * height;
+        const cardYPos = labelY + (cardY / 100) * renderHeight;
         pdf.setFontSize(cardFontSize);
         pdf.setFont("helvetica", "bold");
         pdf.text(
           (item.cardName || "Unknown").substring(0, 30),
-          labelX + width / 2,
+          labelX + renderWidth / 2,
           cardYPos,
           { align: "center" },
         );
 
         // Set Name (if shown)
         if (showSet) {
-          const setYPos = labelY + (setY / 100) * height;
+          const setYPos = labelY + (setY / 100) * renderHeight;
           pdf.setFontSize(setFontSize);
           pdf.setFont("helvetica", "normal");
           const setInfo = item.setName || "Unknown Set";
@@ -449,7 +457,7 @@ export default function LabelsPage() {
               : "";
           pdf.text(
             `${setInfo}${printing}`.substring(0, 35),
-            labelX + width / 2,
+            labelX + renderWidth / 2,
             setYPos,
             { align: "center" },
           );
@@ -457,17 +465,21 @@ export default function LabelsPage() {
 
         // Store name (if shown)
         if (showStore) {
-          const y = labelY + (storeY / 100) * height;
+          const y = labelY + (storeY / 100) * renderHeight;
           pdf.setFontSize(storeFontSize);
           pdf.setFont("helvetica", "bold");
-          pdf.text("VaultTrove", labelX + width / 2, y, { align: "center" });
+          pdf.text("VaultTrove", labelX + renderWidth / 2, y, {
+            align: "center",
+          });
         }
 
         // SKU - ✅ Using item.sku which now contains correct SKU from database
-        const skuYPos = labelY + (skuY / 100) * height;
+        const skuYPos = labelY + (skuY / 100) * renderHeight;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" }); // ✅ Correct SKU
+        pdf.text(item.sku, labelX + renderWidth / 2, skuYPos, {
+          align: "center",
+        }); // ✅ Correct SKU
       }
 
       const pdfBlob = pdf.output("blob");
