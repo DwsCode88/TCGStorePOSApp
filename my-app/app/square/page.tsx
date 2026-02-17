@@ -63,22 +63,10 @@ export default function SquareSyncPage() {
 
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
-        const docId = doc.id;
-
-        // Extract SKU explicitly (don't let spread overwrite it)
-        const skuFromData = data.sku;
-
-        // Remove sku from data before spreading
-        const { sku: _, ...dataWithoutSku } = data;
-
-        // Use SKU from database field, NOT doc ID
-        const finalSku =
-          skuFromData && skuFromData.trim() !== "" ? skuFromData : docId;
-
         return {
-          ...dataWithoutSku,
-          id: docId,
-          sku: finalSku,
+          ...data,
+          id: doc.id,
+          sku: data.sku || doc.id,
         };
       }) as (InventoryItem & { id: string })[];
 
@@ -152,6 +140,8 @@ export default function SquareSyncPage() {
   };
 
   const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
+    console.log(`📤 Syncing: ${item.cardName}, SKU: ${item.sku}`);
+
     // Call our API route (server-side) instead of Square directly
     const requestBody = {
       accessToken: squareAccessToken,
@@ -167,45 +157,52 @@ export default function SquareSyncPage() {
       },
     };
 
-    const response = await fetch("/api/square/sync", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
+    try {
+      const response = await fetch("/api/square/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      console.error("❌ Sync error:", error);
-      throw new Error(error.error || "Sync failed");
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("❌ Sync failed:", error);
+        throw new Error(error.error || "Sync failed");
+      }
+
+      const result = await response.json();
+
+      // Update Firebase with Square ID using document ID
+      const docId = item.id;
+
+      await updateDoc(doc(db, "inventory", docId), {
+        status: "listed",
+        squareItemId: result.squareItemId,
+        squareVariationId: result.squareVariationId,
+        listedAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Update local state
+      setItems(
+        items.map((i) =>
+          i.sku === item.sku
+            ? {
+                ...i,
+                status: "listed" as const,
+                squareItemId: result.squareItemId,
+              }
+            : i,
+        ),
+      );
+
+      console.log(`✅ Synced: ${item.cardName}`);
+    } catch (error: any) {
+      console.error(`❌ Failed to sync ${item.cardName}:`, error);
+      throw error;
     }
-
-    const result = await response.json();
-
-    // Update Firebase with Square ID using document ID
-    const docId = item.id;
-
-    await updateDoc(doc(db, "inventory", docId), {
-      status: "listed",
-      squareItemId: result.squareItemId,
-      squareVariationId: result.squareVariationId,
-      listedAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    // Update local state
-    setItems(
-      items.map((i) =>
-        i.sku === item.sku
-          ? {
-              ...i,
-              status: "listed" as const,
-              squareItemId: result.squareItemId,
-            }
-          : i,
-      ),
-    );
   };
 
   const allSelected = items.length > 0 && selectedItems.size === items.length;
