@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 export default function SquareSyncPage() {
-  const [items, setItems] = useState<(InventoryItem & { id: string })[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -54,10 +54,21 @@ export default function SquareSyncPage() {
           id: doc.id,
           sku: data.sku || doc.id,
         };
-      }) as (InventoryItem & { id: string })[];
+      }) as InventoryItem[];
 
+<<<<<<< HEAD
       setItems(loadedItems);
       toast.success(`Loaded ${loadedItems.length} items`);
+=======
+      console.log("📋 All items:", loadedItems.length);
+
+      // Filter to labeled items (ready to list)
+      const labeled = loadedItems.filter((item) => item.status === "labeled");
+      console.log("🏷️ Labeled items:", labeled.length);
+
+      setItems(labeled);
+      toast.success(`Loaded ${labeled.length} items ready to sync`);
+>>>>>>> parent of e31e351 (updates)
     } catch (error: any) {
       console.error("Failed to load:", error);
       toast.error(`Failed to load: ${error.message}`);
@@ -120,8 +131,15 @@ export default function SquareSyncPage() {
     }
   };
 
+<<<<<<< HEAD
   const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
     console.log(`📤 Syncing: ${item.cardName}, SKU: ${item.sku}`);
+=======
+  const syncItemToSquare = async (item: InventoryItem) => {
+    console.log(`📤 Syncing: ${item.cardName}`);
+    console.log(`   SKU: ${item.sku}`);
+    console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
+>>>>>>> parent of e31e351 (updates)
 
     try {
       const response = await fetch("/api/square/sync", {
@@ -142,6 +160,7 @@ export default function SquareSyncPage() {
         }),
       });
 
+<<<<<<< HEAD
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Sync failed");
@@ -174,6 +193,39 @@ export default function SquareSyncPage() {
       console.error(`❌ Failed to sync ${item.cardName}:`, error);
       throw error;
     }
+=======
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Sync error:", error);
+      throw new Error(error.error || "Sync failed");
+    }
+
+    const result = await response.json();
+    console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
+
+    // Update Firebase with Square ID using document ID
+    const docId = (item as any).id || item.sku; // Use stored doc ID or fallback to SKU
+    await updateDoc(doc(db, "inventory", docId), {
+      status: "listed",
+      squareItemId: result.squareItemId,
+      squareVariationId: result.squareVariationId,
+      listedAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // Update local state
+    setItems(
+      items.map((i) =>
+        i.sku === item.sku
+          ? {
+              ...i,
+              status: "listed" as const,
+              squareItemId: result.squareItemId,
+            }
+          : i,
+      ),
+    );
+>>>>>>> parent of e31e351 (updates)
   };
 
   return (
