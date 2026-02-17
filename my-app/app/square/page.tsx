@@ -71,6 +71,15 @@ export default function SquareSyncPage() {
       }) as InventoryItem[];
 
       console.log("📋 All items:", loadedItems.length);
+      console.log("🔍 First item:", loadedItems[0]);
+
+      // SHOW USER WHAT WE LOADED
+      if (loadedItems.length > 0) {
+        const first = loadedItems[0];
+        alert(
+          `LOADED FROM FIREBASE:\n\nCard: ${first.cardName}\nDoc ID: ${(first as any).id}\nSKU: ${first.sku}\n\n${(first as any).id === first.sku ? "❌ BUG: SKU = Doc ID!" : "✅ SKU is different from Doc ID"}`,
+        );
+      }
 
       // Filter to labeled items (ready to list)
       const labeled = loadedItems.filter((item) => item.status === "labeled");
@@ -141,59 +150,95 @@ export default function SquareSyncPage() {
   };
 
   const syncItemToSquare = async (item: InventoryItem) => {
-    console.log(`📤 Syncing: ${item.cardName}`);
+    console.log(`\n📤 ========== SYNCING ==========`);
+    console.log(`Card: ${item.cardName}`);
+    console.log(`SKU: ${item.sku}`);
+    console.log(`Price: $${item.sellPrice}`);
 
-    // Call our API route (server-side) instead of Square directly
-    const response = await fetch("/api/square/sync", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        accessToken: squareAccessToken,
-        locationId: squareLocationId,
-        item: {
-          sku: item.sku,
-          cardName: item.cardName,
-          setName: item.setName,
-          printing: item.printing,
-          condition: item.condition,
-          sellPrice: item.sellPrice,
-          quantity: item.quantity || 1,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      console.error("Sync error:", error);
-      throw new Error(error.error || "Sync failed");
-    }
-
-    const result = await response.json();
-    console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
-
-    // Update Firebase with Square ID using document ID
-    await updateDoc(doc(db, "inventory", (item as any).id), {
-      status: "listed",
-      squareItemId: result.squareItemId,
-      squareVariationId: result.squareVariationId,
-      listedAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    // Update local state
-    setItems(
-      items.map((i) =>
-        i.sku === item.sku
-          ? {
-              ...i,
-              status: "listed" as const,
-              squareItemId: result.squareItemId,
-            }
-          : i,
-      ),
+    // SHOW USER WHAT WE'RE SENDING
+    alert(
+      `SYNCING TO SQUARE:\n\nCard: ${item.cardName}\nSKU: ${item.sku}\n\n${(item as any).id === item.sku ? "❌ PROBLEM: Sending Doc ID as SKU!" : "✅ Sending actual SKU"}`,
     );
+
+    try {
+      console.log(`🌐 Calling /api/square/sync...`);
+
+      const response = await fetch("/api/square/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          accessToken: squareAccessToken,
+          locationId: squareLocationId,
+          item: {
+            sku: item.sku,
+            cardName: item.cardName,
+            setName: item.setName,
+            printing: item.printing,
+            condition: item.condition,
+            sellPrice: item.sellPrice,
+            quantity: item.quantity || 1,
+          },
+        }),
+      });
+
+      console.log(`📡 Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("❌ API Error:", error);
+        throw new Error(error.error || "Sync failed");
+      }
+
+      const result = await response.json();
+      console.log("✅ API Success:", result);
+      console.log(`   Square Item ID: ${result.squareItemId}`);
+
+      // SHOW USER WHERE TO FIND THE ITEM
+      const isSandbox = squareAccessToken.startsWith("EAAA");
+      const dashboardUrl = isSandbox
+        ? "https://squareupsandbox.com/dashboard/items/library"
+        : "https://squareup.com/dashboard/items/library";
+
+      alert(
+        `✅ ITEM ADDED TO SQUARE!\n\nCard: ${item.cardName}\nSquare Item ID: ${result.squareItemId}\n\nLook in: ${isSandbox ? "SANDBOX" : "PRODUCTION"}\n${dashboardUrl}\n\nSearch for: "${item.cardName}"`,
+      );
+
+      // Update Firebase with Square ID using document ID
+      console.log(`📝 Updating Firebase doc: ${(item as any).id}`);
+
+      await updateDoc(doc(db, "inventory", (item as any).id), {
+        status: "listed",
+        squareItemId: result.squareItemId,
+        squareVariationId: result.squareVariationId,
+        listedAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      console.log(`✅ Firebase updated`);
+
+      // Update local state
+      setItems(
+        items.map((i) =>
+          i.sku === item.sku
+            ? {
+                ...i,
+                status: "listed" as const,
+                squareItemId: result.squareItemId,
+              }
+            : i,
+        ),
+      );
+
+      console.log(`✅ Sync complete for ${item.cardName}`);
+    } catch (error: any) {
+      console.error(`\n❌ ========== SYNC FAILED ==========`);
+      console.error(`Card: ${item.cardName}`);
+      console.error(`Error:`, error.message);
+      console.error(`Full error:`, error);
+      throw error;
+    }
   };
 
   const allSelected = items.length > 0 && selectedItems.size === items.length;
