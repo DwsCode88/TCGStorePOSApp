@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
     console.log("  - Token length:", accessToken?.length);
     console.log("  - Token starts with:", accessToken?.substring(0, 10));
     console.log("  - Item:", item?.cardName);
+    console.log("  - SKU RECEIVED FROM FRONTEND:", item?.sku); // ← CRITICAL: What SKU was sent?
     console.log("  - Quantity:", item?.quantity);
 
     if (!accessToken || !item) {
@@ -22,6 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("🔄 Syncing to Square:", item.cardName);
+    console.log("📤 WILL USE SKU:", item.sku); // ← What SKU will be sent to Square?
 
     // Use Production environment (works for both prod and sandbox tokens)
     const client = new Client({
@@ -54,7 +56,7 @@ export async function POST(request: NextRequest) {
                   amount: BigInt(Math.round((item.sellPrice || 0) * 100)), // Convert to cents
                   currency: "USD",
                 },
-                sku: item.sku,
+                sku: item.sku, // ← This is what goes to Square
               },
             },
           ],
@@ -70,6 +72,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("✅ Synced:", item.cardName, "→", catalogObject.id);
+    console.log("✅ SKU SENT TO SQUARE:", item.sku); // ← Confirm what was sent
 
     // Update inventory quantity
     const variationId = catalogObject.itemData?.variations?.[0]?.id;

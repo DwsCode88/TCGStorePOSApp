@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 export default function SquareSyncPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<(InventoryItem & { id: string })[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +68,15 @@ export default function SquareSyncPage() {
           id: doc.id, // Keep doc ID for updates
           sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
         };
-      }) as InventoryItem[];
+      }) as (InventoryItem & { id: string })[];
 
       console.log("📋 All items:", loadedItems.length);
+      console.log("🔍 First 3 items with SKUs:");
+      loadedItems.slice(0, 3).forEach((item, i) => {
+        console.log(`  ${i + 1}. ${item.cardName}`);
+        console.log(`     SKU: "${item.sku}"`);
+        console.log(`     Doc ID: "${item.id}"`);
+      });
 
       // Filter to labeled items (ready to list)
       const labeled = loadedItems.filter((item) => item.status === "labeled");
@@ -140,10 +146,11 @@ export default function SquareSyncPage() {
     }
   };
 
-  const syncItemToSquare = async (item: InventoryItem) => {
-    console.log(`📤 Syncing: ${item.cardName}`);
-    console.log(`   SKU: ${item.sku}`);
-    console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
+  const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
+    console.log(`\n📤 Syncing: ${item.cardName}`);
+    console.log(`   SKU being sent to Square: "${item.sku}"`);
+    console.log(`   Firebase Doc ID: "${item.id}"`);
+    console.log(`   Price: $${item.sellPrice}`);
 
     // Call our API route (server-side) instead of Square directly
     const response = await fetch("/api/square/sync", {
@@ -168,15 +175,18 @@ export default function SquareSyncPage() {
 
     if (!response.ok) {
       const error = await response.json();
-      console.error("Sync error:", error);
+      console.error("❌ Sync error:", error);
       throw new Error(error.error || "Sync failed");
     }
 
     const result = await response.json();
-    console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
+    console.log(`✅ Synced to Square! Item ID: ${result.squareItemId}`);
+    console.log(`   SKU in Square: "${item.sku}"`);
 
     // Update Firebase with Square ID using document ID
-    const docId = (item as any).id || item.sku; // Use stored doc ID or fallback to SKU
+    const docId = item.id; // Use the stored document ID
+    console.log(`   Updating Firebase doc: "${docId}"`);
+
     await updateDoc(doc(db, "inventory", docId), {
       status: "listed",
       squareItemId: result.squareItemId,
