@@ -7,14 +7,11 @@ export async function POST(request: NextRequest) {
     const { accessToken, locationId, item } = body;
 
     console.log("🔍 API Route called");
+    console.log("  - Has accessToken?", !!accessToken);
+    console.log("  - Has locationId?", !!locationId);
+    console.log("  - Token length:", accessToken?.length);
+    console.log("  - Token starts with:", accessToken?.substring(0, 10));
     console.log("  - Item:", item?.cardName);
-<<<<<<< HEAD
-<<<<<<< HEAD
-    console.log("  - SKU:", item?.sku);
-=======
->>>>>>> parent of e31e351 (updates)
-=======
->>>>>>> parent of e31e351 (updates)
     console.log("  - Quantity:", item?.quantity);
 
     if (!accessToken || !item) {
@@ -32,9 +29,11 @@ export async function POST(request: NextRequest) {
       environment: Environment.Production,
     });
 
-    // Create catalog object using SDK
-    console.log(`🔵 Creating Square item with SKU: "${item.sku}"`);
+    console.log("  - Using environment: Production");
 
+    console.log("  - Client created, calling Square API...");
+
+    // Create catalog object using SDK
     const response = await client.catalogApi.upsertCatalogObject({
       idempotencyKey: item.sku,
       object: {

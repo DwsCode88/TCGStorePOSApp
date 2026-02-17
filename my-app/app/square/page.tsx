@@ -18,14 +18,26 @@ export default function SquareSyncPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [squareAccessToken, setSquareAccessToken] = useState("");
   const [squareLocationId, setSquareLocationId] = useState("");
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    loadSquareSettings();
-    loadInventory();
+    console.log("🚀 Square page mounted");
+
+    const init = async () => {
+      try {
+        loadSquareSettings();
+        await loadInventory();
+      } catch (error) {
+        console.error("Init error:", error);
+        setLoading(false);
+      }
+    };
+
+    init();
   }, []);
 
   const loadSquareSettings = () => {
@@ -45,21 +57,19 @@ export default function SquareSyncPage() {
   const loadInventory = async () => {
     setLoading(true);
     try {
+      console.log("📦 Loading inventory...");
       const snapshot = await getDocs(collection(db, "inventory"));
+      console.log("✅ Got snapshot:", snapshot.size, "items");
 
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
         return {
           ...data,
-          id: doc.id,
-          sku: data.sku || doc.id,
+          id: doc.id, // Keep doc ID for updates
+          sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
         };
       }) as InventoryItem[];
 
-<<<<<<< HEAD
-      setItems(loadedItems);
-      toast.success(`Loaded ${loadedItems.length} items`);
-=======
       console.log("📋 All items:", loadedItems.length);
 
       // Filter to labeled items (ready to list)
@@ -68,11 +78,10 @@ export default function SquareSyncPage() {
 
       setItems(labeled);
       toast.success(`Loaded ${labeled.length} items ready to sync`);
->>>>>>> parent of e31e351 (updates)
     } catch (error: any) {
-      console.error("Failed to load:", error);
+      console.error("❌ Failed to load:", error);
       toast.error(`Failed to load: ${error.message}`);
-      setItems([]);
+      setItems([]); // Set empty array on error
     } finally {
       setLoading(false);
     }
@@ -131,75 +140,32 @@ export default function SquareSyncPage() {
     }
   };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-  const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
-    console.log(`📤 Syncing: ${item.cardName}, SKU: ${item.sku}`);
-=======
-=======
->>>>>>> parent of e31e351 (updates)
   const syncItemToSquare = async (item: InventoryItem) => {
     console.log(`📤 Syncing: ${item.cardName}`);
     console.log(`   SKU: ${item.sku}`);
     console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
-<<<<<<< HEAD
->>>>>>> parent of e31e351 (updates)
-=======
->>>>>>> parent of e31e351 (updates)
 
-    try {
-      const response = await fetch("/api/square/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accessToken: squareAccessToken,
-          locationId: squareLocationId,
-          item: {
-            sku: item.sku,
-            cardName: item.cardName,
-            setName: item.setName,
-            printing: item.printing,
-            condition: item.condition,
-            sellPrice: item.sellPrice,
-            quantity: item.quantity || 1,
-          },
-        }),
-      });
+    // Call our API route (server-side) instead of Square directly
+    const response = await fetch("/api/square/sync", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        accessToken: squareAccessToken,
+        locationId: squareLocationId,
+        item: {
+          sku: item.sku, // ✅ Now uses correct SKU from database
+          cardName: item.cardName,
+          setName: item.setName,
+          printing: item.printing,
+          condition: item.condition,
+          sellPrice: item.sellPrice,
+          quantity: item.quantity || 1,
+        },
+      }),
+    });
 
-<<<<<<< HEAD
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Sync failed");
-      }
-
-      const result = await response.json();
-
-      await updateDoc(doc(db, "inventory", item.id), {
-        status: "listed",
-        squareItemId: result.squareItemId,
-        squareVariationId: result.squareVariationId,
-        listedAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      setItems(
-        items.map((i) =>
-          i.sku === item.sku
-            ? {
-                ...i,
-                status: "listed" as const,
-                squareItemId: result.squareItemId,
-              }
-            : i,
-        ),
-      );
-
-      console.log(`✅ Synced: ${item.cardName}`);
-    } catch (error: any) {
-      console.error(`❌ Failed to sync ${item.cardName}:`, error);
-      throw error;
-    }
-=======
     if (!response.ok) {
       const error = await response.json();
       console.error("Sync error:", error);
@@ -231,126 +197,204 @@ export default function SquareSyncPage() {
           : i,
       ),
     );
->>>>>>> parent of e31e351 (updates)
   };
+
+  const allSelected = items.length > 0 && selectedItems.size === items.length;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-lg font-medium">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold">📦 Square POS Sync</h1>
-            <p className="text-gray-600">Upload inventory to Square</p>
+            <h1 className="text-4xl font-bold mb-2">Square POS Sync</h1>
+            <p className="text-gray-600">
+              Push labeled items to Square catalog
+            </p>
           </div>
           <Button
             onClick={() => setShowSettings(!showSettings)}
             variant="outline"
           >
             <Settings className="w-4 h-4 mr-2" />
-            Settings
+            Square Settings
           </Button>
         </div>
 
+        {/* Settings Panel */}
         {showSettings && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-bold mb-4">Square Settings</h2>
+          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">
+              Square API Configuration
+            </h2>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Access Token
+                  Square Access Token
+                  <a
+                    href="https://developer.squareup.com/apps"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 text-xs ml-2 hover:underline"
+                  >
+                    Get from Square Developer Dashboard →
+                  </a>
                 </label>
                 <input
                   type="password"
                   value={squareAccessToken}
                   onChange={(e) => setSquareAccessToken(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg"
-                  placeholder="EAAxxxxx..."
+                  placeholder="EAAAl..."
+                  className="w-full px-4 py-2 border rounded-lg font-mono text-sm"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Location ID
+                  Square Location ID
+                  <span className="text-xs text-gray-600 ml-2">
+                    (Your store location)
+                  </span>
                 </label>
                 <input
                   type="text"
                   value={squareLocationId}
                   onChange={(e) => setSquareLocationId(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg"
                   placeholder="L..."
+                  className="w-full px-4 py-2 border rounded-lg font-mono text-sm"
                 />
               </div>
-              <Button onClick={saveSquareSettings}>Save Settings</Button>
+              <div className="flex gap-2">
+                <Button onClick={saveSquareSettings} className="bg-green-600">
+                  Save Settings
+                </Button>
+                <Button
+                  onClick={() => setShowSettings(false)}
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex gap-4 mb-4">
+        {/* Status Banner */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-blue-900">
+                {selectedItems.size} items selected
+              </div>
+              <div className="text-sm text-blue-700">
+                {items.length} items ready to sync
+              </div>
+            </div>
+            {squareAccessToken && squareLocationId ? (
+              <div className="flex items-center gap-2 text-green-700">
+                <CheckCircle className="w-5 h-5" />
+                <span className="text-sm font-medium">Square Connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-red-700">
+                <XCircle className="w-5 h-5" />
+                <span className="text-sm font-medium">
+                  Square Not Configured
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          <div className="flex gap-3">
+            <Button onClick={toggleAll} variant="outline" className="flex-1">
+              <CheckCircle className="w-4 h-4 mr-2" />
+              {allSelected ? "Deselect All" : "Select All"}
+            </Button>
             <Button
               onClick={loadInventory}
               variant="outline"
-              disabled={loading}
+              className="flex-1"
             >
-              <RefreshCw
-                className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`}
-              />
+              <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
             </Button>
             <Button
               onClick={syncToSquare}
-              disabled={syncing || selectedItems.size === 0}
+              disabled={
+                selectedItems.size === 0 || syncing || !squareAccessToken
+              }
+              className="flex-1 bg-blue-600"
+              size="lg"
             >
               <Upload className="w-4 h-4 mr-2" />
-              {syncing
-                ? `Syncing ${selectedItems.size}...`
-                : `Sync ${selectedItems.size} Selected`}
-            </Button>
-            <Button onClick={toggleAll} variant="outline">
-              {selectedItems.size === items.length
-                ? "Deselect All"
-                : "Select All"}
+              {syncing ? "Syncing..." : `Sync ${selectedItems.size} to Square`}
             </Button>
           </div>
+        </div>
 
-          {loading ? (
-            <div className="text-center py-8">Loading...</div>
+        {/* Items Grid */}
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h2 className="text-xl font-semibold mb-4">
+            Items Ready to Sync ({items.length})
+          </h2>
+
+          {items.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <p className="mb-2">No items ready to sync</p>
+              <p className="text-sm">
+                Items must be "labeled" status to appear here
+              </p>
+            </div>
           ) : (
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map((item) => {
                 const isSelected = selectedItems.has(item.sku);
                 return (
                   <div
                     key={item.sku}
                     onClick={() => toggleItem(item.sku)}
-                    className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                    className={`p-4 border-2 rounded-lg cursor-pointer transition ${
                       isSelected
                         ? "border-blue-500 bg-blue-50"
                         : "border-gray-200 hover:border-blue-300"
                     }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-start justify-between mb-2">
                       <div className="flex-1">
-                        <div className="font-bold">{item.cardName}</div>
-                        <div className="text-sm text-gray-600">
-                          {item.setName} • {item.condition} • ${item.sellPrice}
+                        <div className="font-semibold text-gray-900 mb-1">
+                          {item.cardName}
                         </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          SKU: {item.sku}
+                        <div className="text-sm text-gray-600 mb-1">
+                          {item.setName}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {item.printing} • {item.condition}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {item.status === "listed" && item.squareItemId && (
-                          <span className="flex items-center gap-1 text-green-600 text-sm">
-                            <CheckCircle className="w-4 h-4" />
-                            Listed
-                          </span>
+                      <div className="flex-shrink-0 ml-2">
+                        {isSelected ? (
+                          <CheckCircle className="w-6 h-6 text-blue-600" />
+                        ) : (
+                          <div className="w-6 h-6 border-2 border-gray-300 rounded-full" />
                         )}
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="w-5 h-5"
-                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-3 border-t">
+                      <div className="text-lg font-bold text-green-600">
+                        ${(item.sellPrice || 0).toFixed(2)}
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono">
+                        {item.sku}
                       </div>
                     </div>
                   </div>
