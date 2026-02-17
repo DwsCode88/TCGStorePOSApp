@@ -52,7 +52,6 @@ export default function LabelsPage() {
 
   // Label options
   const [useQRCode, setUseQRCode] = useState(false); // QR code instead of barcode
-  const [verticalOrientation, setVerticalOrientation] = useState(false); // Rotate 90 degrees
 
   useEffect(() => {
     loadInventory();
@@ -84,7 +83,6 @@ export default function LabelsPage() {
         setOffsetY(layout.offsetY ?? 0);
         setOnePerPage(layout.onePerPage ?? true);
         setUseQRCode(layout.useQRCode ?? false);
-        setVerticalOrientation(layout.verticalOrientation ?? false);
         console.log("✅ Loaded saved layout");
       } catch (e) {
         console.error("Failed to load layout:", e);
@@ -114,7 +112,6 @@ export default function LabelsPage() {
       offsetY,
       onePerPage,
       useQRCode,
-      verticalOrientation,
     };
     localStorage.setItem("labelLayout", JSON.stringify(layout));
     toast.success("Layout saved! It will load automatically next time.");
@@ -320,28 +317,16 @@ export default function LabelsPage() {
       const labelWidthWithMargin = width + spacing;
       const labelHeightWithMargin = height + spacing;
 
-      // Swap dimensions for vertical orientation
-      const effectiveWidth = verticalOrientation ? height : width;
-      const effectiveHeight = verticalOrientation ? width : height;
-      const effectiveWidthWithMargin = verticalOrientation
-        ? labelHeightWithMargin
-        : labelWidthWithMargin;
-      const effectiveHeightWithMargin = verticalOrientation
-        ? labelWidthWithMargin
-        : labelHeightWithMargin;
-
       let labelsPerRow, labelsPerCol, labelsPerPage;
 
       if (onePerPage) {
         labelsPerRow = 1;
         labelsPerCol = 1;
         labelsPerPage = 1;
-        console.log(
-          `📄 ONE LABEL PER PAGE mode${verticalOrientation ? " (VERTICAL)" : ""}`,
-        );
+        console.log(`📄 ONE LABEL PER PAGE mode`);
       } else {
-        labelsPerRow = Math.floor(8.5 / effectiveWidthWithMargin);
-        labelsPerCol = Math.floor(11 / effectiveHeightWithMargin);
+        labelsPerRow = Math.floor(8.5 / labelWidthWithMargin);
+        labelsPerCol = Math.floor(11 / labelHeightWithMargin);
         labelsPerPage = labelsPerRow * labelsPerCol;
         console.log(
           `📄 ${labelsPerRow}×${labelsPerCol} = ${labelsPerPage} labels per page`,
@@ -386,39 +371,19 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        // Helper function to add rotated text
-        const addText = (
-          text: string,
-          x: number,
-          y: number,
-          options: any = {},
-        ) => {
-          if (verticalOrientation) {
-            // For 90° rotation: swap X and Y, add angle
-            const rotatedX = labelX + (y - labelY);
-            const rotatedY = labelY + width - (x - labelX);
-            pdf.text(text, rotatedX, rotatedY, { ...options, angle: 90 });
-          } else {
-            pdf.text(text, x, y, options);
-          }
-        };
-
-        const renderWidth = width;
-        const renderHeight = height;
-
         // TOP: Price and Condition on SAME LINE
-        const priceYPos = labelY + (priceY / 100) * renderHeight;
+        const priceYPos = labelY + (priceY / 100) * height;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
-        addText(
+        pdf.text(
           `$${(item.sellPrice || 0).toFixed(2)}  ${item.condition || "NM"}`,
-          labelX + renderWidth / 2,
+          labelX + width / 2,
           priceYPos,
           { align: "center" },
         );
 
         // MIDDLE: QR Code or Barcode (Centered, larger)
-        const barcodeYPos = labelY + (barcodeY / 100) * renderHeight;
+        const barcodeYPos = labelY + (barcodeY / 100) * height;
         try {
           const canvas = document.createElement("canvas");
           bwipjs.toCanvas(canvas, {
@@ -430,41 +395,36 @@ export default function LabelsPage() {
           });
           const img = canvas.toDataURL("image/png");
 
-          const codeWidth = useQRCode
-            ? renderHeight * 0.35
-            : renderWidth * 0.85;
-          const codeHeight = useQRCode
-            ? renderHeight * 0.35
-            : renderHeight * 0.12;
-          const codeX = labelX + (renderWidth - codeWidth) / 2;
-          const codeY = barcodeYPos - (useQRCode ? codeHeight / 2 : 0);
+          const codeWidth = useQRCode ? height * 0.35 : width * 0.85;
+          const codeHeight = useQRCode ? height * 0.35 : height * 0.12;
+          const codeX = labelX + (width - codeWidth) / 2;
 
-          if (verticalOrientation) {
-            // Rotate coordinates for vertical orientation
-            const rotatedX = labelX + (codeY - labelY);
-            const rotatedY = labelY + width - (codeX - labelX) - codeWidth;
-            pdf.addImage(img, "PNG", rotatedX, rotatedY, codeHeight, codeWidth);
-          } else {
-            pdf.addImage(img, "PNG", codeX, codeY, codeWidth, codeHeight);
-          }
+          pdf.addImage(
+            img,
+            "PNG",
+            codeX,
+            barcodeYPos - (useQRCode ? codeHeight / 2 : 0),
+            codeWidth,
+            codeHeight,
+          );
         } catch (e) {
           console.error(useQRCode ? "QR code error:" : "Barcode error:", e);
         }
 
         // BOTTOM: Card Name
-        const cardYPos = labelY + (cardY / 100) * renderHeight;
+        const cardYPos = labelY + (cardY / 100) * height;
         pdf.setFontSize(cardFontSize);
         pdf.setFont("helvetica", "bold");
-        addText(
+        pdf.text(
           (item.cardName || "Unknown").substring(0, 30),
-          labelX + renderWidth / 2,
+          labelX + width / 2,
           cardYPos,
           { align: "center" },
         );
 
         // Set Name (if shown)
         if (showSet) {
-          const setYPos = labelY + (setY / 100) * renderHeight;
+          const setYPos = labelY + (setY / 100) * height;
           pdf.setFontSize(setFontSize);
           pdf.setFont("helvetica", "normal");
           const setInfo = item.setName || "Unknown Set";
@@ -472,9 +432,9 @@ export default function LabelsPage() {
             item.printing && item.printing !== "Normal"
               ? ` (${item.printing})`
               : "";
-          addText(
+          pdf.text(
             `${setInfo}${printing}`.substring(0, 35),
-            labelX + renderWidth / 2,
+            labelX + width / 2,
             setYPos,
             { align: "center" },
           );
@@ -482,21 +442,17 @@ export default function LabelsPage() {
 
         // Store name (if shown)
         if (showStore) {
-          const y = labelY + (storeY / 100) * renderHeight;
+          const y = labelY + (storeY / 100) * height;
           pdf.setFontSize(storeFontSize);
           pdf.setFont("helvetica", "bold");
-          addText("VaultTrove", labelX + renderWidth / 2, y, {
-            align: "center",
-          });
+          pdf.text("VaultTrove", labelX + width / 2, y, { align: "center" });
         }
 
-        // SKU - ✅ Using item.sku which now contains correct SKU from database
-        const skuYPos = labelY + (skuY / 100) * renderHeight;
+        // SKU
+        const skuYPos = labelY + (skuY / 100) * height;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        addText(item.sku, labelX + renderWidth / 2, skuYPos, {
-          align: "center",
-        });
+        pdf.text(item.sku, labelX + width / 2, skuYPos, { align: "center" });
       }
 
       const pdfBlob = pdf.output("blob");
@@ -628,14 +584,8 @@ export default function LabelsPage() {
                 <div
                   className="bg-white border-4 border-gray-800 shadow-2xl relative overflow-hidden"
                   style={{
-                    width: verticalOrientation
-                      ? `${height * 96}px`
-                      : `${width * 96}px`,
-                    height: verticalOrientation
-                      ? `${width * 96}px`
-                      : `${height * 96}px`,
-                    transform: verticalOrientation ? "rotate(90deg)" : "none",
-                    transformOrigin: "center",
+                    width: `${width * 96}px`,
+                    height: `${height * 96}px`,
                   }}
                 >
                   {/* Position Guide Lines (only show in preview) */}
@@ -1165,34 +1115,6 @@ export default function LabelsPage() {
                           {useQRCode
                             ? "Using QR code (scannable with phone cameras)"
                             : "Using traditional barcode"}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Vertical Orientation Toggle */}
-                    <div className="flex items-center gap-3 p-3 border-2 rounded-lg hover:border-purple-300 transition-colors">
-                      <input
-                        type="checkbox"
-                        id="verticalOrientation"
-                        checked={verticalOrientation}
-                        onChange={(e) =>
-                          setVerticalOrientation(e.target.checked)
-                        }
-                        className="w-5 h-5"
-                      />
-                      <div className="flex-1">
-                        <label
-                          htmlFor="verticalOrientation"
-                          className="font-semibold cursor-pointer block"
-                        >
-                          {verticalOrientation
-                            ? "📱 Vertical (90°)"
-                            : "📏 Horizontal"}
-                        </label>
-                        <p className="text-xs text-gray-600 mt-1">
-                          {verticalOrientation
-                            ? "Label rotated 90° for vertical cards"
-                            : "Standard horizontal layout"}
                         </p>
                       </div>
                     </div>
