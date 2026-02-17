@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import {
+
+
   collection,
   getDocs,
   doc,
@@ -22,7 +24,7 @@ import {
   Save,
 } from "lucide-react";
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -50,25 +52,10 @@ export default function InventoryPage() {
     setLoading(true);
     try {
       const snapshot = await getDocs(collection(db, "inventory"));
-      const loadedItems = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          ...data,
-          id: doc.id, // Keep doc ID for updates
-          sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
-        };
-      }) as InventoryItem[];
-
-      console.log(`📦 Loaded ${loadedItems.length} items`);
-      if (loadedItems.length > 0) {
-        console.log(
-          "First item SKU:",
-          loadedItems[0].sku,
-          "Doc ID:",
-          (loadedItems[0] as any).id,
-        );
-      }
-
+      const loadedItems = snapshot.docs.map((doc) => ({
+        ...doc.data(),
+        sku: doc.id,
+      })) as InventoryItem[];
       setItems(loadedItems);
     } catch (error: any) {
       console.error("Failed:", error);
@@ -99,19 +86,16 @@ export default function InventoryPage() {
     if (selectedItems.size === filteredItems.length) {
       setSelectedItems(new Set());
     } else {
-      // Use document ID for selection, not SKU
-      setSelectedItems(
-        new Set(filteredItems.map((item) => (item as any).id || item.sku)),
-      );
+      setSelectedItems(new Set(filteredItems.map((item) => item.sku)));
     }
   };
 
-  const toggleSelectItem = (docId: string) => {
+  const toggleSelectItem = (sku: string) => {
     const newSelected = new Set(selectedItems);
-    if (newSelected.has(docId)) {
-      newSelected.delete(docId);
+    if (newSelected.has(sku)) {
+      newSelected.delete(sku);
     } else {
-      newSelected.add(docId);
+      newSelected.add(sku);
     }
     setSelectedItems(newSelected);
   };
@@ -138,8 +122,8 @@ export default function InventoryPage() {
     try {
       console.log(`📝 Mass editing ${selectedItems.size} items...`);
 
-      for (const docId of selectedItems) {
-        await updateDoc(doc(db, "inventory", docId), updates);
+      for (const sku of selectedItems) {
+        await updateDoc(doc(db, "inventory", sku), updates);
       }
 
       toast.success(`Updated ${selectedItems.size} items!`);
@@ -173,8 +157,8 @@ export default function InventoryPage() {
     try {
       console.log(`🗑️ Deleting ${selectedItems.size} items...`);
 
-      for (const docId of selectedItems) {
-        await deleteDoc(doc(db, "inventory", docId));
+      for (const sku of selectedItems) {
+        await deleteDoc(doc(db, "inventory", sku));
       }
 
       toast.success(`Deleted ${selectedItems.size} items!`);
@@ -426,15 +410,14 @@ export default function InventoryPage() {
           ) : (
             <div className="divide-y">
               {filteredItems.map((item) => {
-                const docId = (item as any).id || item.sku; // Use doc ID for selection
-                const isSelected = selectedItems.has(docId);
+                const isSelected = selectedItems.has(item.sku);
                 return (
                   <div
-                    key={docId} // Use doc ID as key
+                    key={item.sku}
                     className={`p-4 flex items-center gap-4 hover:bg-gray-50 cursor-pointer ${
                       isSelected ? "bg-blue-50 border-l-4 border-blue-600" : ""
                     }`}
-                    onClick={() => toggleSelectItem(docId)} // Select by doc ID
+                    onClick={() => toggleSelectItem(item.sku)}
                   >
                     <div className="flex-shrink-0">
                       <input
