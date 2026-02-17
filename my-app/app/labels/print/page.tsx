@@ -411,15 +411,23 @@ export default function LabelsPage() {
           console.error(useQRCode ? "QR code error:" : "Barcode error:", e);
         }
 
-        // BOTTOM: Card Name
+        // BOTTOM: Card Name (auto-size for long names)
         const cardYPos = labelY + (cardY / 100) * height;
-        pdf.setFontSize(cardFontSize);
+        const cardName = item.cardName || "Unknown";
+
+        // Use smaller font for long names
+        if (cardName.length > 20) {
+          pdf.setFontSize(cardFontSize - 2);
+        } else {
+          pdf.setFontSize(cardFontSize);
+        }
+
         pdf.setFont("helvetica", "bold");
         pdf.text(
-          (item.cardName || "Unknown").substring(0, 30),
+          cardName.substring(0, 40), // Allow more characters
           labelX + width / 2,
           cardYPos,
-          { align: "center" },
+          { align: "center", maxWidth: width * 0.9 },
         );
 
         // Set Name (if shown)
@@ -687,10 +695,14 @@ export default function LabelsPage() {
                       transform: "translateY(-50%)",
                       paddingLeft: "4px",
                       paddingRight: "4px",
-                      lineHeight: 1.1,
+                      lineHeight: 1.2,
                     }}
                   >
                     Monkey.D.Luffy
+                    <br />
+                    <span style={{ fontSize: "0.9em", opacity: 0.6 }}>
+                      (Long names wrap)
+                    </span>
                   </div>
 
                   {/* Set Name (centered) */}
