@@ -61,10 +61,14 @@ export default function SquareSyncPage() {
       const snapshot = await getDocs(collection(db, "inventory"));
       console.log("✅ Got snapshot:", snapshot.size, "items");
 
-      const loadedItems = snapshot.docs.map((doc) => ({
-        ...doc.data(),
-        sku: doc.id,
-      })) as InventoryItem[];
+      const loadedItems = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id, // Keep document ID
+          sku: data.sku || doc.id, // Use SKU from data, fallback to doc ID
+        };
+      }) as InventoryItem[];
 
       console.log("📋 All items:", loadedItems.length);
 
@@ -169,8 +173,8 @@ export default function SquareSyncPage() {
     const result = await response.json();
     console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
 
-    // Update Firebase with Square ID
-    await updateDoc(doc(db, "inventory", item.sku), {
+    // Update Firebase with Square ID using document ID
+    await updateDoc(doc(db, "inventory", (item as any).id), {
       status: "listed",
       squareItemId: result.squareItemId,
       squareVariationId: result.squareVariationId,
