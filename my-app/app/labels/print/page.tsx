@@ -386,15 +386,70 @@ export default function LabelsPage() {
 
         const leftMargin = 0.1;
 
-        // For vertical orientation, we'll use width/height as-is but rotate the final rendering
-        const renderWidth = verticalOrientation ? height : width;
-        const renderHeight = verticalOrientation ? width : height;
+        // Helper function to transform coordinates for rotation
+        const transformCoords = (x: number, y: number) => {
+          if (verticalOrientation) {
+            // Rotate 90° clockwise: new_x = y, new_y = width - x
+            return {
+              x: labelX + y - labelY,
+              y: labelY + width - (x - labelX),
+            };
+          }
+          return { x, y };
+        };
+
+        // Helper function to add rotated text
+        const addText = (
+          text: string,
+          x: number,
+          y: number,
+          options: any = {},
+        ) => {
+          if (verticalOrientation) {
+            const coords = transformCoords(x, y);
+            pdf.text(text, coords.x, coords.y, { ...options, angle: 90 });
+          } else {
+            pdf.text(text, x, y, options);
+          }
+        };
+
+        // Helper function to add rotated image
+        const addRotatedImage = (
+          img: string,
+          x: number,
+          y: number,
+          w: number,
+          h: number,
+        ) => {
+          if (verticalOrientation) {
+            pdf.saveGraphicsState();
+            // Translate and rotate
+            const rotX = labelX + (y - labelY) + h / 2;
+            const rotY = labelY + width - (x - labelX) - w / 2;
+            pdf.setGState(new pdf.GState());
+            // Move to position, rotate, draw
+            const pageHeight = 11; // Letter size
+            pdf.internal.write(`q`); // Save state
+            pdf.internal.write(
+              `${h} 0 0 ${w} ${rotX * 72} ${(pageHeight - rotY) * 72} cm`,
+            ); // Position and size
+            pdf.internal.write(`0 -1 1 0 -0.5 0.5 cm`); // Rotate 90°
+            pdf.addImage(img, "PNG", 0, 0, 1, 1);
+            pdf.internal.write(`Q`); // Restore state
+            pdf.restoreGraphicsState();
+          } else {
+            pdf.addImage(img, "PNG", x, y, w, h);
+          }
+        };
+
+        const renderWidth = width;
+        const renderHeight = height;
 
         // TOP: Price and Condition on SAME LINE
         const priceYPos = labelY + (priceY / 100) * renderHeight;
         pdf.setFontSize(priceFontSize);
         pdf.setFont("helvetica", "bold");
-        pdf.text(
+        addText(
           `$${(item.sellPrice || 0).toFixed(2)}  ${item.condition || "NM"}`,
           labelX + renderWidth / 2,
           priceYPos,
@@ -422,9 +477,8 @@ export default function LabelsPage() {
             : renderHeight * 0.12;
           const codeX = labelX + (renderWidth - codeWidth) / 2;
 
-          pdf.addImage(
+          addRotatedImage(
             img,
-            "PNG",
             codeX,
             barcodeYPos - (useQRCode ? codeHeight / 2 : 0),
             codeWidth,
@@ -438,7 +492,7 @@ export default function LabelsPage() {
         const cardYPos = labelY + (cardY / 100) * renderHeight;
         pdf.setFontSize(cardFontSize);
         pdf.setFont("helvetica", "bold");
-        pdf.text(
+        addText(
           (item.cardName || "Unknown").substring(0, 30),
           labelX + renderWidth / 2,
           cardYPos,
@@ -455,7 +509,7 @@ export default function LabelsPage() {
             item.printing && item.printing !== "Normal"
               ? ` (${item.printing})`
               : "";
-          pdf.text(
+          addText(
             `${setInfo}${printing}`.substring(0, 35),
             labelX + renderWidth / 2,
             setYPos,
@@ -468,7 +522,7 @@ export default function LabelsPage() {
           const y = labelY + (storeY / 100) * renderHeight;
           pdf.setFontSize(storeFontSize);
           pdf.setFont("helvetica", "bold");
-          pdf.text("VaultTrove", labelX + renderWidth / 2, y, {
+          addText("VaultTrove", labelX + renderWidth / 2, y, {
             align: "center",
           });
         }
@@ -477,9 +531,9 @@ export default function LabelsPage() {
         const skuYPos = labelY + (skuY / 100) * renderHeight;
         pdf.setFontSize(skuFontSize);
         pdf.setFont("courier", "normal");
-        pdf.text(item.sku, labelX + renderWidth / 2, skuYPos, {
+        addText(item.sku, labelX + renderWidth / 2, skuYPos, {
           align: "center",
-        }); // ✅ Correct SKU
+        });
       }
 
       const pdfBlob = pdf.output("blob");
