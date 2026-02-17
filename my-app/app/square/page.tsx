@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 export default function SquareSyncPage() {
-  const [items, setItems] = useState<(InventoryItem & { id: string })[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +68,7 @@ export default function SquareSyncPage() {
           id: doc.id,
           sku: data.sku || doc.id,
         };
-      }) as (InventoryItem & { id: string })[];
+      }) as InventoryItem[];
 
       console.log("📋 All items:", loadedItems.length);
 
@@ -139,8 +139,15 @@ export default function SquareSyncPage() {
     }
   };
 
+<<<<<<< HEAD
   const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
     console.log(`📤 Syncing: ${item.cardName}, SKU: ${item.sku}`);
+=======
+  const syncItemToSquare = async (item: InventoryItem) => {
+    console.log(`📤 Syncing: ${item.cardName}`);
+    console.log(`   SKU: ${item.sku}`);
+    console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
+>>>>>>> parent of e31e351 (updates)
 
     // Call our API route (server-side) instead of Square directly
     const requestBody = {
@@ -166,6 +173,7 @@ export default function SquareSyncPage() {
         body: JSON.stringify(requestBody),
       });
 
+<<<<<<< HEAD
       if (!response.ok) {
         const error = await response.json();
         console.error("❌ Sync failed:", error);
@@ -203,6 +211,39 @@ export default function SquareSyncPage() {
       console.error(`❌ Failed to sync ${item.cardName}:`, error);
       throw error;
     }
+=======
+    if (!response.ok) {
+      const error = await response.json();
+      console.error("Sync error:", error);
+      throw new Error(error.error || "Sync failed");
+    }
+
+    const result = await response.json();
+    console.log("✅ Synced:", item.cardName, "→", result.squareItemId);
+
+    // Update Firebase with Square ID using document ID
+    const docId = (item as any).id || item.sku; // Use stored doc ID or fallback to SKU
+    await updateDoc(doc(db, "inventory", docId), {
+      status: "listed",
+      squareItemId: result.squareItemId,
+      squareVariationId: result.squareVariationId,
+      listedAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // Update local state
+    setItems(
+      items.map((i) =>
+        i.sku === item.sku
+          ? {
+              ...i,
+              status: "listed" as const,
+              squareItemId: result.squareItemId,
+            }
+          : i,
+      ),
+    );
+>>>>>>> parent of e31e351 (updates)
   };
 
   const allSelected = items.length > 0 && selectedItems.size === items.length;
