@@ -9,7 +9,10 @@ export async function POST(request: NextRequest) {
     console.log("🔍 API Route called");
     console.log("  - Item:", item?.cardName);
 <<<<<<< HEAD
+<<<<<<< HEAD
     console.log("  - SKU:", item?.sku);
+=======
+>>>>>>> parent of e31e351 (updates)
 =======
 >>>>>>> parent of e31e351 (updates)
     console.log("  - Quantity:", item?.quantity);

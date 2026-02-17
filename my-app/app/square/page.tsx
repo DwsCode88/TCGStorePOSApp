@@ -132,13 +132,19 @@ export default function SquareSyncPage() {
   };
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
     console.log(`📤 Syncing: ${item.cardName}, SKU: ${item.sku}`);
 =======
+=======
+>>>>>>> parent of e31e351 (updates)
   const syncItemToSquare = async (item: InventoryItem) => {
     console.log(`📤 Syncing: ${item.cardName}`);
     console.log(`   SKU: ${item.sku}`);
     console.log(`   Doc ID: ${(item as any).id || "N/A"}`);
+<<<<<<< HEAD
+>>>>>>> parent of e31e351 (updates)
+=======
 >>>>>>> parent of e31e351 (updates)
 
     try {
