@@ -63,27 +63,30 @@ export default function SquareSyncPage() {
 
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
+        const docId = doc.id;
+
+        // Get SKU from data, but verify it's NOT the doc ID
+        let actualSku = data.sku;
+
+        // If SKU is missing, empty, or equals doc ID, it's invalid
+        if (!actualSku || actualSku.trim() === "" || actualSku === docId) {
+          actualSku = docId; // Fallback to doc ID
+        }
+
         return {
           ...data,
-          id: doc.id, // Keep doc ID for updates
-          sku: data.sku || doc.id, // ✅ Use SKU from database, fallback to doc ID
+          id: docId,
+          sku: actualSku,
         };
       }) as (InventoryItem & { id: string })[];
 
       console.log("📋 All items:", loadedItems.length);
-      console.log("🔍 First 3 items with SKUs:");
-      loadedItems.slice(0, 3).forEach((item, i) => {
-        console.log(`  ${i + 1}. ${item.cardName}`);
-        console.log(`     SKU: "${item.sku}"`);
-        console.log(`     Doc ID: "${item.id}"`);
-      });
 
-      // Filter to labeled items (ready to list)
-      const labeled = loadedItems.filter((item) => item.status === "labeled");
-      console.log("🏷️ Labeled items:", labeled.length);
+      // Show ALL items, not just labeled ones
+      console.log("📋 Showing all items (no status filter)");
 
-      setItems(labeled);
-      toast.success(`Loaded ${labeled.length} items ready to sync`);
+      setItems(loadedItems);
+      toast.success(`Loaded ${loadedItems.length} items`);
     } catch (error: any) {
       console.error("❌ Failed to load:", error);
       toast.error(`Failed to load: ${error.message}`);
@@ -147,30 +150,27 @@ export default function SquareSyncPage() {
   };
 
   const syncItemToSquare = async (item: InventoryItem & { id: string }) => {
-    console.log(`\n📤 Syncing: ${item.cardName}`);
-    console.log(`   SKU being sent to Square: "${item.sku}"`);
-    console.log(`   Firebase Doc ID: "${item.id}"`);
-    console.log(`   Price: $${item.sellPrice}`);
-
     // Call our API route (server-side) instead of Square directly
+    const requestBody = {
+      accessToken: squareAccessToken,
+      locationId: squareLocationId,
+      item: {
+        sku: item.sku,
+        cardName: item.cardName,
+        setName: item.setName,
+        printing: item.printing,
+        condition: item.condition,
+        sellPrice: item.sellPrice,
+        quantity: item.quantity || 1,
+      },
+    };
+
     const response = await fetch("/api/square/sync", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        accessToken: squareAccessToken,
-        locationId: squareLocationId,
-        item: {
-          sku: item.sku, // ✅ Now uses correct SKU from database
-          cardName: item.cardName,
-          setName: item.setName,
-          printing: item.printing,
-          condition: item.condition,
-          sellPrice: item.sellPrice,
-          quantity: item.quantity || 1,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -180,12 +180,9 @@ export default function SquareSyncPage() {
     }
 
     const result = await response.json();
-    console.log(`✅ Synced to Square! Item ID: ${result.squareItemId}`);
-    console.log(`   SKU in Square: "${item.sku}"`);
 
     // Update Firebase with Square ID using document ID
-    const docId = item.id; // Use the stored document ID
-    console.log(`   Updating Firebase doc: "${docId}"`);
+    const docId = item.id;
 
     await updateDoc(doc(db, "inventory", docId), {
       status: "listed",

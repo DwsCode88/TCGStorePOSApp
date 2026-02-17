@@ -7,12 +7,8 @@ export async function POST(request: NextRequest) {
     const { accessToken, locationId, item } = body;
 
     console.log("🔍 API Route called");
-    console.log("  - Has accessToken?", !!accessToken);
-    console.log("  - Has locationId?", !!locationId);
-    console.log("  - Token length:", accessToken?.length);
-    console.log("  - Token starts with:", accessToken?.substring(0, 10));
     console.log("  - Item:", item?.cardName);
-    console.log("  - SKU RECEIVED FROM FRONTEND:", item?.sku); // ← CRITICAL: What SKU was sent?
+    console.log("  - SKU:", item?.sku);
     console.log("  - Quantity:", item?.quantity);
 
     if (!accessToken || !item) {
@@ -23,17 +19,12 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("🔄 Syncing to Square:", item.cardName);
-    console.log("📤 WILL USE SKU:", item.sku); // ← What SKU will be sent to Square?
 
     // Use Production environment (works for both prod and sandbox tokens)
     const client = new Client({
       accessToken: accessToken,
       environment: Environment.Production,
     });
-
-    console.log("  - Using environment: Production");
-
-    console.log("  - Client created, calling Square API...");
 
     // Create catalog object using SDK
     const response = await client.catalogApi.upsertCatalogObject({
@@ -72,7 +63,6 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("✅ Synced:", item.cardName, "→", catalogObject.id);
-    console.log("✅ SKU SENT TO SQUARE:", item.sku); // ← Confirm what was sent
 
     // Update inventory quantity
     const variationId = catalogObject.itemData?.variations?.[0]?.id;
