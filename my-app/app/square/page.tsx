@@ -65,18 +65,20 @@ export default function SquareSyncPage() {
         const data = doc.data();
         const docId = doc.id;
 
-        // Get SKU from data, but verify it's NOT the doc ID
-        let actualSku = data.sku;
+        // Extract SKU explicitly (don't let spread overwrite it)
+        const skuFromData = data.sku;
 
-        // If SKU is missing, empty, or equals doc ID, it's invalid
-        if (!actualSku || actualSku.trim() === "" || actualSku === docId) {
-          actualSku = docId; // Fallback to doc ID
-        }
+        // Remove sku from data before spreading
+        const { sku: _, ...dataWithoutSku } = data;
+
+        // Use SKU from database field, NOT doc ID
+        const finalSku =
+          skuFromData && skuFromData.trim() !== "" ? skuFromData : docId;
 
         return {
-          ...data,
+          ...dataWithoutSku,
           id: docId,
-          sku: actualSku,
+          sku: finalSku,
         };
       }) as (InventoryItem & { id: string })[];
 

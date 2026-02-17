@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
     });
 
     // Create catalog object using SDK
+    console.log(`🔵 Creating Square item with SKU: "${item.sku}"`);
+
     const response = await client.catalogApi.upsertCatalogObject({
       idempotencyKey: item.sku,
       object: {
