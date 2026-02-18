@@ -303,7 +303,7 @@ export default function DashboardPage() {
                   ? `${labeledCards} cards (${items.filter((i) => i.status === "labeled").length} items) ready to sync`
                   : "No items ready. Print labels first!"}
               </p>
-              <div className="flex gap-3">
+              <div className="flex gap-3 flex-wrap">
                 <Button
                   onClick={quickSyncToSquare}
                   disabled={syncing || labeledCards === 0 || !squareAccessToken}
@@ -312,6 +312,15 @@ export default function DashboardPage() {
                   <Upload className="w-4 h-4 mr-2" />
                   {syncing ? "Syncing..." : `Sync ${labeledCards} Cards`}
                 </Button>
+                <Link href="/square-csv-export">
+                  <Button
+                    variant="outline"
+                    className="border-white text-white hover:bg-blue-600"
+                  >
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </Button>
+                </Link>
                 <Link href="/square">
                   <Button
                     variant="outline"
