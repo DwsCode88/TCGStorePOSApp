@@ -71,6 +71,35 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ Synced:", item.cardName, "→", catalogObject.id);
 
+    // Add image if photoUrl is provided
+    if (item.photoUrl) {
+      try {
+        console.log(`🖼️ Adding image: ${item.photoUrl}`);
+
+        const imageResponse = await client.catalogApi.createCatalogImage({
+          idempotencyKey: `${item.sku}-image-${Date.now()}`,
+          objectId: catalogObject.id,
+          image: {
+            type: "IMAGE",
+            id: `#${item.sku}-image`,
+            imageData: {
+              url: item.photoUrl,
+            },
+          },
+        });
+
+        if (imageResponse.result.image) {
+          console.log(`✅ Image added successfully`);
+        }
+      } catch (imageError: any) {
+        console.error(
+          "⚠️ Image upload failed (non-critical):",
+          imageError.message,
+        );
+        // Don't fail the whole sync if image upload fails
+      }
+    }
+
     // Update inventory quantity
     const variationId = catalogObject.itemData?.variations?.[0]?.id;
 

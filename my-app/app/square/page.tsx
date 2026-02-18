@@ -7,37 +7,47 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { InventoryItem } from "@/types/inventory";
 import {
+  Package,
   Upload,
   CheckCircle,
-  XCircle,
-  RefreshCw,
+  Clock,
+  DollarSign,
+  TrendingUp,
+  BarChart3,
   Settings,
+  Printer,
+  ShoppingCart,
+  FileDown,
+  History,
+  Archive,
+  FileUp,
 } from "lucide-react";
+import Link from "next/link";
 
-export default function SquareSyncPage() {
+interface ExportBatch {
+  id: string;
+  batchNumber: string;
+  exportedAt: Date;
+  itemCount: number;
+  totalCards: number;
+  totalValue: number;
+  filename: string;
+}
+
+export const dynamic = "force-dynamic";
+
+export default function DashboardPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [batches, setBatches] = useState<ExportBatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [squareAccessToken, setSquareAccessToken] = useState("");
   const [squareLocationId, setSquareLocationId] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    console.log("🚀 Square page mounted");
-
-    const init = async () => {
-      try {
-        loadSquareSettings();
-        await loadInventory();
-      } catch (error) {
-        console.error("Init error:", error);
-        setLoading(false);
-      }
-    };
-
-    init();
+    loadInventory();
+    loadSquareSettings();
+    loadBatches();
   }, []);
 
   const loadSquareSettings = () => {
@@ -47,100 +57,128 @@ export default function SquareSyncPage() {
     if (location) setSquareLocationId(location);
   };
 
-  const saveSquareSettings = () => {
-    localStorage.setItem("squareAccessToken", squareAccessToken);
-    localStorage.setItem("squareLocationId", squareLocationId);
-    toast.success("Square settings saved!");
-    setShowSettings(false);
-  };
-
   const loadInventory = async () => {
     setLoading(true);
     try {
-      console.log("📦 Loading inventory...");
       const snapshot = await getDocs(collection(db, "inventory"));
-      console.log("✅ Got snapshot:", snapshot.size, "items");
-
       const loadedItems = snapshot.docs.map((doc) => {
         const data = doc.data();
         return {
           ...data,
-          id: doc.id, // Keep document ID
+          id: doc.id, // Firebase document ID
           sku: data.sku || doc.id, // Use SKU from data, fallback to doc ID
         };
       }) as InventoryItem[];
-
-      console.log("📋 All items:", loadedItems.length);
-      console.log("🔍 First item:", loadedItems[0]);
-
-      // SHOW USER WHAT WE LOADED
-      if (loadedItems.length > 0) {
-        const first = loadedItems[0];
-        alert(
-          `LOADED FROM FIREBASE:\n\nCard: ${first.cardName}\nDoc ID: ${(first as any).id}\nSKU: ${first.sku}\n\n${(first as any).id === first.sku ? "❌ BUG: SKU = Doc ID!" : "✅ SKU is different from Doc ID"}`,
-        );
-      }
-
-      // Filter to labeled items (ready to list)
-      const labeled = loadedItems.filter((item) => item.status === "labeled");
-      console.log("🏷️ Labeled items:", labeled.length);
-
-      setItems(labeled);
-      toast.success(`Loaded ${labeled.length} items ready to sync`);
+      setItems(loadedItems);
     } catch (error: any) {
-      console.error("❌ Failed to load:", error);
-      toast.error(`Failed to load: ${error.message}`);
-      setItems([]); // Set empty array on error
+      console.error("Failed:", error);
+      toast.error("Failed to load inventory");
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleItem = (sku: string) => {
-    const newSelected = new Set(selectedItems);
-    if (newSelected.has(sku)) {
-      newSelected.delete(sku);
-    } else {
-      newSelected.add(sku);
+  const loadBatches = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "exportBatches"));
+      const loadedBatches = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        exportedAt: doc.data().exportedAt?.toDate() || new Date(),
+      })) as ExportBatch[];
+
+      loadedBatches.sort(
+        (a, b) => b.exportedAt.getTime() - a.exportedAt.getTime(),
+      );
+      setBatches(loadedBatches.slice(0, 5));
+    } catch (error: any) {
+      console.error("Failed to load batches:", error);
     }
-    setSelectedItems(newSelected);
   };
 
-  const toggleAll = () => {
-    if (selectedItems.size === items.length) {
-      setSelectedItems(new Set());
-    } else {
-      setSelectedItems(new Set(items.map((item) => item.sku)));
-    }
-  };
-
-  const syncToSquare = async () => {
+  const quickSyncToSquare = async () => {
     if (!squareAccessToken || !squareLocationId) {
-      toast.error("Please configure Square settings first");
-      setShowSettings(true);
+      toast.error("Square not configured. Go to Square page to set up.");
       return;
     }
 
-    if (selectedItems.size === 0) {
-      toast.error("Please select at least one item");
+    const labeledItems = items.filter((item) => item.status === "labeled");
+
+    if (labeledItems.length === 0) {
+      toast.error("No labeled items to sync. Print labels first!");
       return;
     }
 
     setSyncing(true);
-    const itemsToSync = items.filter((item) => selectedItems.has(item.sku));
-
-    console.log("🔄 Syncing to Square:", itemsToSync.length, "items");
+    const totalCards = labeledItems.reduce(
+      (sum, i) => sum + (i.quantity || 1),
+      0,
+    );
+    console.log(
+      `🔄 Quick syncing ${labeledItems.length} labeled items (${totalCards} total cards) to Square`,
+    );
 
     try {
-      for (const item of itemsToSync) {
-        await syncItemToSquare(item);
+      let successCount = 0;
+      let failCount = 0;
+      let totalCardsSync = 0;
+
+      for (const item of labeledItems) {
+        try {
+          const response = await fetch("/api/square/sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              accessToken: squareAccessToken,
+              locationId: squareLocationId,
+              item: {
+                sku: item.sku,
+                cardName: item.cardName,
+                setName: item.setName,
+                printing: item.printing,
+                condition: item.condition,
+                sellPrice: item.sellPrice,
+                quantity: item.quantity || 1,
+                photoUrl: (item as any).photoUrl || null,
+              },
+            }),
+          });
+
+          if (response.ok) {
+            await updateDoc(
+              doc(db, "inventory", (item as any).id || item.sku),
+              {
+                status: "listed",
+                updatedAt: new Date(),
+              },
+            );
+            successCount++;
+            totalCardsSync += item.quantity || 1;
+            console.log(
+              `✅ Synced: ${item.cardName} (${item.quantity || 1} cards)`,
+            );
+          } else {
+            failCount++;
+            console.error(`❌ Failed: ${item.cardName}`);
+          }
+        } catch (err) {
+          failCount++;
+          console.error(`❌ Error syncing ${item.cardName}:`, err);
+        }
       }
 
-      toast.success(
-        `Successfully synced ${itemsToSync.length} items to Square!`,
-      );
-      setSelectedItems(new Set());
-      loadInventory();
+      if (successCount > 0) {
+        toast.success(
+          `✅ Synced ${totalCardsSync} cards (${successCount} items) to Square!`,
+        );
+      }
+      if (failCount > 0) {
+        toast.error(`❌ Failed to sync ${failCount} items`);
+      }
+
+      await loadInventory();
     } catch (error: any) {
       console.error("Sync failed:", error);
       toast.error(`Sync failed: ${error.message}`);
@@ -149,104 +187,47 @@ export default function SquareSyncPage() {
     }
   };
 
-  const syncItemToSquare = async (item: InventoryItem) => {
-    console.log(`\n📤 ========== SYNCING ==========`);
-    console.log(`Card: ${item.cardName}`);
-    console.log(`SKU: ${item.sku}`);
-    console.log(`Price: $${item.sellPrice}`);
+  // Calculate stats
+  const totalItems = items.length;
+  const totalCards = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const totalValue = items.reduce(
+    (sum, item) => sum + (item.sellPrice || 0) * (item.quantity || 1),
+    0,
+  );
+  const totalCost = items.reduce(
+    (sum, item) => sum + (item.costBasis || 0) * (item.quantity || 1),
+    0,
+  );
+  const potentialProfit = totalValue - totalCost;
+  const profitMargin =
+    totalValue > 0 ? (potentialProfit / totalValue) * 100 : 0;
 
-    // SHOW USER WHAT WE'RE SENDING
-    alert(
-      `SYNCING TO SQUARE:\n\nCard: ${item.cardName}\nSKU: ${item.sku}\n\n${(item as any).id === item.sku ? "❌ PROBLEM: Sending Doc ID as SKU!" : "✅ Sending actual SKU"}`,
-    );
+  // Status counts (cards, not items)
+  const pendingCards = items
+    .filter((i) => i.status === "pending")
+    .reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const pricedCards = items
+    .filter((i) => i.status === "priced")
+    .reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const labeledCards = items
+    .filter((i) => i.status === "labeled")
+    .reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const listedCards = items
+    .filter((i) => i.status === "listed")
+    .reduce((sum, item) => sum + (item.quantity || 1), 0);
 
-    try {
-      console.log(`🌐 Calling /api/square/sync...`);
-
-      const response = await fetch("/api/square/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          accessToken: squareAccessToken,
-          locationId: squareLocationId,
-          item: {
-            sku: item.sku,
-            cardName: item.cardName,
-            setName: item.setName,
-            printing: item.printing,
-            condition: item.condition,
-            sellPrice: item.sellPrice,
-            quantity: item.quantity || 1,
-          },
-        }),
-      });
-
-      console.log(`📡 Response status: ${response.status}`);
-
-      if (!response.ok) {
-        const error = await response.json();
-        console.error("❌ API Error:", error);
-        throw new Error(error.error || "Sync failed");
-      }
-
-      const result = await response.json();
-      console.log("✅ API Success:", result);
-      console.log(`   Square Item ID: ${result.squareItemId}`);
-
-      // SHOW USER WHERE TO FIND THE ITEM
-      const isSandbox = squareAccessToken.startsWith("EAAA");
-      const dashboardUrl = isSandbox
-        ? "https://squareupsandbox.com/dashboard/items/library"
-        : "https://squareup.com/dashboard/items/library";
-
-      alert(
-        `✅ ITEM ADDED TO SQUARE!\n\nCard: ${item.cardName}\nSquare Item ID: ${result.squareItemId}\n\nLook in: ${isSandbox ? "SANDBOX" : "PRODUCTION"}\n${dashboardUrl}\n\nSearch for: "${item.cardName}"`,
-      );
-
-      // Update Firebase with Square ID using document ID
-      console.log(`📝 Updating Firebase doc: ${(item as any).id}`);
-
-      await updateDoc(doc(db, "inventory", (item as any).id), {
-        status: "listed",
-        squareItemId: result.squareItemId,
-        squareVariationId: result.squareVariationId,
-        listedAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      console.log(`✅ Firebase updated`);
-
-      // Update local state
-      setItems(
-        items.map((i) =>
-          i.sku === item.sku
-            ? {
-                ...i,
-                status: "listed" as const,
-                squareItemId: result.squareItemId,
-              }
-            : i,
-        ),
-      );
-
-      console.log(`✅ Sync complete for ${item.cardName}`);
-    } catch (error: any) {
-      console.error(`\n❌ ========== SYNC FAILED ==========`);
-      console.error(`Card: ${item.cardName}`);
-      console.error(`Error:`, error.message);
-      console.error(`Full error:`, error);
-      throw error;
-    }
-  };
-
-  const allSelected = items.length > 0 && selectedItems.size === items.length;
+  // Export stats
+  const notExportedItems = items.filter((i) => !i.exportedAt).length;
+  const notExportedCards = items
+    .filter((i) => !i.exportedAt)
+    .reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const exportedItems = items.filter((i) => i.exportedAt).length;
+  const totalBatches = batches.length;
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-lg font-medium">Loading...</div>
+        <div className="text-lg font-medium">Loading dashboard...</div>
       </div>
     );
   }
@@ -254,196 +235,309 @@ export default function SquareSyncPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Square POS Sync</h1>
-            <p className="text-gray-600">
-              Push labeled items to Square catalog
-            </p>
-          </div>
-          <Button
-            onClick={() => setShowSettings(!showSettings)}
-            variant="outline"
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Square Settings
-          </Button>
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold mb-2">VaultTrove Dashboard</h1>
+          <p className="text-gray-600">Manage your TCG inventory</p>
         </div>
 
-        {/* Settings Panel */}
-        {showSettings && (
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">
-              Square API Configuration
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Square Access Token
-                  <a
-                    href="https://developer.squareup.com/apps"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 text-xs ml-2 hover:underline"
-                  >
-                    Get from Square Developer Dashboard →
-                  </a>
-                </label>
-                <input
-                  type="password"
-                  value={squareAccessToken}
-                  onChange={(e) => setSquareAccessToken(e.target.value)}
-                  placeholder="EAAAl..."
-                  className="w-full px-4 py-2 border rounded-lg font-mono text-sm"
-                />
+        {/* Quick Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-2">
+              <Package className="w-8 h-8 text-blue-600" />
+              <BarChart3 className="w-5 h-5 text-gray-400" />
+            </div>
+            <div className="text-3xl font-bold mb-1">{totalCards}</div>
+            <div className="text-sm text-gray-600">Total Cards</div>
+            <div className="text-xs text-gray-500 mt-1">{totalItems} items</div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-2">
+              <DollarSign className="w-8 h-8 text-green-600" />
+              <TrendingUp className="w-5 h-5 text-green-400" />
+            </div>
+            <div className="text-3xl font-bold mb-1">
+              ${totalValue.toFixed(2)}
+            </div>
+            <div className="text-sm text-gray-600">Total Value</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Cost: ${totalCost.toFixed(2)}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-2">
+              <TrendingUp className="w-8 h-8 text-purple-600" />
+              <div className="text-xs font-semibold text-purple-600">
+                {profitMargin.toFixed(1)}%
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Square Location ID
-                  <span className="text-xs text-gray-600 ml-2">
-                    (Your store location)
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  value={squareLocationId}
-                  onChange={(e) => setSquareLocationId(e.target.value)}
-                  placeholder="L..."
-                  className="w-full px-4 py-2 border rounded-lg font-mono text-sm"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={saveSquareSettings} className="bg-green-600">
-                  Save Settings
-                </Button>
+            </div>
+            <div className="text-3xl font-bold mb-1">
+              ${potentialProfit.toFixed(2)}
+            </div>
+            <div className="text-sm text-gray-600">Potential Profit</div>
+            <div className="text-xs text-gray-500 mt-1">Margin</div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-2">
+              <CheckCircle className="w-8 h-8 text-orange-600" />
+              <ShoppingCart className="w-5 h-5 text-orange-400" />
+            </div>
+            <div className="text-3xl font-bold mb-1">{labeledCards}</div>
+            <div className="text-sm text-gray-600">Ready to Sync</div>
+            <div className="text-xs text-gray-500 mt-1">
+              {items.filter((i) => i.status === "labeled").length} items
+            </div>
+          </div>
+        </div>
+
+        {/* Square Sync Section */}
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg shadow-lg p-6 mb-6 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold mb-2">Square POS Sync</h2>
+              <p className="text-blue-100 mb-4">
+                {labeledCards > 0
+                  ? `${labeledCards} cards (${items.filter((i) => i.status === "labeled").length} items) ready to sync`
+                  : "No items ready. Print labels first!"}
+              </p>
+              <div className="flex gap-3">
                 <Button
-                  onClick={() => setShowSettings(false)}
-                  variant="outline"
+                  onClick={quickSyncToSquare}
+                  disabled={syncing || labeledCards === 0 || !squareAccessToken}
+                  className="bg-white text-blue-600 hover:bg-blue-50"
                 >
-                  Cancel
+                  <Upload className="w-4 h-4 mr-2" />
+                  {syncing ? "Syncing..." : `Sync ${labeledCards} Cards`}
                 </Button>
+                <Link href="/square">
+                  <Button
+                    variant="outline"
+                    className="border-white text-white hover:bg-blue-600"
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure Square
+                  </Button>
+                </Link>
               </div>
+            </div>
+            <div className="hidden md:block">
+              <div className="text-sm text-blue-100 mb-2">
+                Connection Status
+              </div>
+              <div
+                className={`text-lg font-semibold ${squareAccessToken ? "text-green-300" : "text-yellow-300"}`}
+              >
+                {squareAccessToken ? "✓ Connected" : "! Not Configured"}
+              </div>
+              <div className="text-xs text-blue-200 mt-1">
+                {listedCards} cards already in Square
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* CSV Export Section */}
+        <div className="bg-gradient-to-r from-green-600 to-green-700 rounded-lg shadow-lg p-6 mb-6 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold mb-2">CSV Export to POS</h2>
+              <p className="text-green-100 mb-4">
+                {notExportedCards > 0
+                  ? `${notExportedCards} cards (${notExportedItems} items) ready to export`
+                  : "All items exported!"}
+              </p>
+              <div className="flex gap-3">
+                <Link href="/export">
+                  <Button className="bg-white text-green-600 hover:bg-green-50">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    {notExportedCards > 0
+                      ? `Export ${notExportedCards} Cards`
+                      : "Go to Export"}
+                  </Button>
+                </Link>
+                {totalBatches > 0 && (
+                  <Link href="/export">
+                    <Button
+                      variant="outline"
+                      className="border-white text-white hover:bg-green-600"
+                    >
+                      <History className="w-4 h-4 mr-2" />
+                      View {totalBatches} Batches
+                    </Button>
+                  </Link>
+                )}
+              </div>
+            </div>
+            <div className="hidden md:block">
+              <div className="text-sm text-green-100 mb-2">Export Status</div>
+              <div className="text-lg font-semibold text-green-300">
+                {exportedItems} / {totalItems} Items
+              </div>
+              <div className="text-xs text-green-200 mt-1">
+                {totalBatches} batches in history
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Recent Export Batches */}
+        {batches.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Recent Export Batches</h2>
+              <Link href="/export">
+                <Button variant="outline" size="sm">
+                  <Archive className="w-4 h-4 mr-2" />
+                  View All
+                </Button>
+              </Link>
+            </div>
+            <div className="space-y-3">
+              {batches.map((batch) => (
+                <div
+                  key={batch.id}
+                  className="border rounded p-3 flex items-center justify-between hover:bg-gray-50"
+                >
+                  <div>
+                    <div className="font-semibold text-sm">
+                      {batch.batchNumber}
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      {batch.exportedAt.toLocaleDateString()} •{" "}
+                      {batch.itemCount} items • {batch.totalCards} cards
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-green-600">
+                      ${batch.totalValue.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500">value</div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Status Banner */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-semibold text-blue-900">
-                {selectedItems.size} items selected
+        {/* Inventory Pipeline */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-6">Inventory Pipeline</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-5 h-5 text-yellow-600" />
+                <div className="font-semibold text-yellow-900">Pending</div>
               </div>
-              <div className="text-sm text-blue-700">
-                {items.length} items ready to sync
+              <div className="text-3xl font-bold text-yellow-600 mb-1">
+                {pendingCards}
+              </div>
+              <div className="text-xs text-yellow-700">
+                {items.filter((i) => i.status === "pending").length} items
               </div>
             </div>
-            {squareAccessToken && squareLocationId ? (
-              <div className="flex items-center gap-2 text-green-700">
-                <CheckCircle className="w-5 h-5" />
-                <span className="text-sm font-medium">Square Connected</span>
+
+            <div className="border rounded-lg p-4 bg-blue-50 border-blue-200">
+              <div className="flex items-center gap-2 mb-3">
+                <DollarSign className="w-5 h-5 text-blue-600" />
+                <div className="font-semibold text-blue-900">Priced</div>
               </div>
-            ) : (
-              <div className="flex items-center gap-2 text-red-700">
-                <XCircle className="w-5 h-5" />
-                <span className="text-sm font-medium">
-                  Square Not Configured
-                </span>
+              <div className="text-3xl font-bold text-blue-600 mb-1">
+                {pricedCards}
               </div>
-            )}
+              <div className="text-xs text-blue-700">
+                {items.filter((i) => i.status === "priced").length} items
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-4 bg-orange-50 border-orange-200">
+              <div className="flex items-center gap-2 mb-3">
+                <Printer className="w-5 h-5 text-orange-600" />
+                <div className="font-semibold text-orange-900">Labeled</div>
+              </div>
+              <div className="text-3xl font-bold text-orange-600 mb-1">
+                {labeledCards}
+              </div>
+              <div className="text-xs text-orange-700">
+                {items.filter((i) => i.status === "labeled").length} items
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-4 bg-green-50 border-green-200">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <div className="font-semibold text-green-900">Listed</div>
+              </div>
+              <div className="text-3xl font-bold text-green-600 mb-1">
+                {listedCards}
+              </div>
+              <div className="text-xs text-green-700">
+                {items.filter((i) => i.status === "listed").length} items
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-          <div className="flex gap-3">
-            <Button onClick={toggleAll} variant="outline" className="flex-1">
-              <CheckCircle className="w-4 h-4 mr-2" />
-              {allSelected ? "Deselect All" : "Select All"}
-            </Button>
-            <Button
-              onClick={loadInventory}
-              variant="outline"
-              className="flex-1"
-            >
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Refresh
-            </Button>
-            <Button
-              onClick={syncToSquare}
-              disabled={
-                selectedItems.size === 0 || syncing || !squareAccessToken
-              }
-              className="flex-1 bg-blue-600"
-              size="lg"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              {syncing ? "Syncing..." : `Sync ${selectedItems.size} to Square`}
-            </Button>
-          </div>
-        </div>
+        {/* Quick Actions */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+          <Link href="/intake" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
+              <Upload className="w-10 h-10 text-blue-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Add Inventory</h3>
+              <p className="text-sm text-gray-600">Scan and price new cards</p>
+            </div>
+          </Link>
 
-        {/* Items Grid */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h2 className="text-xl font-semibold mb-4">
-            Items Ready to Sync ({items.length})
-          </h2>
-
-          {items.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="mb-2">No items ready to sync</p>
-              <p className="text-sm">
-                Items must be "labeled" status to appear here
+          <Link href="/tcgplayer-upload" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-green-200 bg-green-50">
+              <FileUp className="w-10 h-10 text-green-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">TCGPlayer Upload</h3>
+              <p className="text-sm text-gray-600">
+                Bulk CSV import with batch tracking
               </p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {items.map((item) => {
-                const isSelected = selectedItems.has(item.sku);
-                return (
-                  <div
-                    key={item.sku}
-                    onClick={() => toggleItem(item.sku)}
-                    className={`p-4 border-2 rounded-lg cursor-pointer transition ${
-                      isSelected
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:border-blue-300"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900 mb-1">
-                          {item.cardName}
-                        </div>
-                        <div className="text-sm text-gray-600 mb-1">
-                          {item.setName}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {item.printing} • {item.condition}
-                        </div>
-                      </div>
-                      <div className="flex-shrink-0 ml-2">
-                        {isSelected ? (
-                          <CheckCircle className="w-6 h-6 text-blue-600" />
-                        ) : (
-                          <div className="w-6 h-6 border-2 border-gray-300 rounded-full" />
-                        )}
-                      </div>
-                    </div>
+          </Link>
 
-                    <div className="flex items-center justify-between pt-3 border-t">
-                      <div className="text-lg font-bold text-green-600">
-                        ${(item.sellPrice || 0).toFixed(2)}
-                      </div>
-                      <div className="text-xs text-gray-500 font-mono">
-                        {item.sku}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+          <Link href="/consignment-intake" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-purple-200 bg-purple-50">
+              <ShoppingCart className="w-10 h-10 text-purple-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Consignment Intake</h3>
+              <p className="text-sm text-gray-600">
+                Accept items on consignment
+              </p>
             </div>
-          )}
+          </Link>
+
+          <Link href="/labels/print" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
+              <Printer className="w-10 h-10 text-orange-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Print Labels</h3>
+              <p className="text-sm text-gray-600">
+                {pricedCards > 0
+                  ? `${pricedCards} cards ready`
+                  : "No cards ready yet"}
+              </p>
+            </div>
+          </Link>
+
+          <Link href="/inventory" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
+              <Package className="w-10 h-10 text-purple-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">View Inventory</h3>
+              <p className="text-sm text-gray-600">{totalCards} total cards</p>
+            </div>
+          </Link>
+
+          <Link href="/batches" className="block">
+            <div className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer border-2 border-orange-200 bg-orange-50">
+              <Archive className="w-10 h-10 text-orange-600 mb-3" />
+              <h3 className="text-lg font-semibold mb-2">Manage Batches</h3>
+              <p className="text-sm text-gray-600">View and delete batches</p>
+            </div>
+          </Link>
         </div>
       </div>
     </div>

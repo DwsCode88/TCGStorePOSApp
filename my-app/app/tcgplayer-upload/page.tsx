@@ -18,6 +18,7 @@ interface ParsedCard {
   marketPrice: number;
   tcgplayerId?: string;
   rarity?: string;
+  photoUrl?: string;
 }
 
 interface Customer {
@@ -50,7 +51,7 @@ export default function TCGPlayerUploadPage() {
     "buy" | "trade" | "pull" | "consignment"
   >("buy");
   const [batchName, setBatchName] = useState("");
-  const [expandQuantities, setExpandQuantities] = useState(true); // Create separate items for each quantity
+  const [expandQuantities, setExpandQuantities] = useState(false); // Create separate items for each quantity
 
   // Customer management
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -150,9 +151,36 @@ export default function TCGPlayerUploadPage() {
         return;
       }
 
-      const headers = lines[0]
-        .split(",")
-        .map((h) => h.trim().replace(/"/g, ""));
+      // Parse CSV properly handling quoted fields
+      const parseCSVLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+
+          if (char === '"') {
+            // Check for escaped quote
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i++; // Skip next quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === "," && !inQuotes) {
+            result.push(current.trim());
+            current = "";
+          } else {
+            current += char;
+          }
+        }
+
+        result.push(current.trim());
+        return result;
+      };
+
+      const headers = parseCSVLine(lines[0]);
 
       console.log("CSV Headers:", headers);
 
@@ -190,12 +218,25 @@ export default function TCGPlayerUploadPage() {
       );
       const quantityIndex = headers.findIndex((h) => {
         const lower = h.toLowerCase();
-        return (
-          lower.includes("quantity") ||
-          lower === "qty" ||
-          lower === "total quantity"
-        );
+        // Check "Add to Quantity" FIRST before generic "quantity"
+        if (lower === "add to quantity" || lower.includes("add to quantity")) {
+          return true;
+        }
+        if (lower === "qty") {
+          return true;
+        }
+        // Only match generic "quantity" if it's NOT "Total Quantity"
+        if (lower.includes("quantity") && !lower.includes("total")) {
+          return true;
+        }
+        return false;
       });
+      const photoUrlIndex = headers.findIndex(
+        (h) =>
+          h.toLowerCase().includes("photo") ||
+          h.toLowerCase().includes("image") ||
+          h.toLowerCase().includes("url"),
+      );
       const priceIndex = headers.findIndex(
         (h) =>
           h.toLowerCase().includes("price") ||
@@ -225,6 +266,10 @@ export default function TCGPlayerUploadPage() {
         quantityIndex >= 0 ? headers[quantityIndex] : "NOT FOUND",
       );
       console.log(
+        "- Photo URL:",
+        photoUrlIndex >= 0 ? headers[photoUrlIndex] : "NOT FOUND",
+      );
+      console.log(
         "- Price:",
         priceIndex >= 0 ? headers[priceIndex] : "NOT FOUND",
       );
@@ -242,9 +287,7 @@ export default function TCGPlayerUploadPage() {
       const cards: ParsedCard[] = [];
 
       for (let i = 1; i < lines.length; i++) {
-        const values = lines[i]
-          .split(",")
-          .map((v) => v.trim().replace(/"/g, ""));
+        const values = parseCSVLine(lines[i]);
 
         if (values.length < 3) continue;
 
@@ -265,7 +308,18 @@ export default function TCGPlayerUploadPage() {
             priceIndex >= 0
               ? parseFloat(values[priceIndex].replace("$", "")) || 0
               : 0,
+          photoUrl: photoUrlIndex >= 0 ? values[photoUrlIndex] : undefined,
         };
+
+        // Log Franky specifically for debugging
+        if (card.productName.toLowerCase().includes("franky")) {
+          console.log("🔍 FRANKY DETECTED:");
+          console.log("  Line:", lines[i]);
+          console.log("  quantityIndex:", quantityIndex);
+          console.log("  Raw quantity value:", values[quantityIndex]);
+          console.log("  Parsed quantity:", card.quantity);
+          console.log("  All values:", values);
+        }
 
         // Log first card for debugging
         if (i === 1) {
@@ -274,6 +328,7 @@ export default function TCGPlayerUploadPage() {
             quantity: card.quantity,
             condition: card.condition,
             marketPrice: card.marketPrice,
+            photoUrl: card.photoUrl,
           });
         }
 
@@ -537,6 +592,7 @@ export default function TCGPlayerUploadPage() {
               location: defaultLocation,
               status: "priced",
               priceSource: "TCGPlayer CSV Import",
+              photoUrl: card.photoUrl || null,
               notes: `Imported from TCGPlayer CSV on ${new Date().toLocaleDateString()}`,
               batchId: batchId,
               batchStartTime: startTime,
@@ -550,6 +606,7 @@ export default function TCGPlayerUploadPage() {
                 sku: inventoryData.sku,
                 cardName: inventoryData.cardName,
                 quantity: inventoryData.quantity,
+                photoUrl: inventoryData.photoUrl,
                 itemsToCreate: itemsToCreate,
                 note:
                   itemsToCreate > 1
@@ -719,7 +776,9 @@ export default function TCGPlayerUploadPage() {
             {parsedCards.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-xl font-semibold mb-4">
-                  2. Preview ({parsedCards.length} cards)
+                  2. Preview (
+                  {parsedCards.reduce((sum, c) => sum + c.quantity, 0)} cards,{" "}
+                  {parsedCards.length} unique items)
                 </h2>
 
                 <div className="max-h-96 overflow-y-auto space-y-2">
@@ -879,25 +938,25 @@ export default function TCGPlayerUploadPage() {
                         htmlFor="expandQuantities"
                         className="font-semibold text-blue-900 cursor-pointer"
                       >
-                        Create separate items for each quantity
+                        Split quantities into separate items
                       </label>
                       <p className="text-sm text-blue-800 mt-1">
                         {expandQuantities ? (
                           <>
-                            ✅ <strong>Enabled:</strong> Quantity 5 → Creates 5
-                            separate items (each qty=1). All use the{" "}
+                            ✅ <strong>Split Mode:</strong> Quantity 2 → Creates
+                            2 separate items (each qty=1). All use the{" "}
                             <strong>same SKU</strong>.
                           </>
                         ) : (
                           <>
-                            📦 <strong>Disabled:</strong> Quantity 5 → Creates 1
-                            item with quantity=5.
+                            📦 <strong>Single Item Mode (Default):</strong>{" "}
+                            Quantity 2 → Creates 1 item with quantity=2.
                           </>
                         )}
                       </p>
                       <p className="text-xs text-blue-700 mt-2">
-                        <strong>Example:</strong> Franky qty=2 → Creates 2
-                        items, both with SKU "OP01-021-NM"
+                        <strong>Recommended:</strong> Keep unchecked to preserve
+                        CSV quantities
                       </p>
                     </div>
                   </div>
@@ -915,6 +974,12 @@ export default function TCGPlayerUploadPage() {
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
                         <span>Total Cards:</span>
+                        <span className="font-bold">
+                          {parsedCards.reduce((sum, c) => sum + c.quantity, 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Unique Items:</span>
                         <span className="font-bold">{parsedCards.length}</span>
                       </div>
                       <div className="flex justify-between">

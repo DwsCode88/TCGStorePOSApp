@@ -61,10 +61,14 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const snapshot = await getDocs(collection(db, "inventory"));
-      const loadedItems = snapshot.docs.map((doc) => ({
-        ...doc.data(),
-        sku: doc.id,
-      })) as InventoryItem[];
+      const loadedItems = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id, // Firebase document ID
+          sku: data.sku || doc.id, // Use SKU from data, fallback to doc ID
+        };
+      }) as InventoryItem[];
       setItems(loadedItems);
     } catch (error: any) {
       console.error("Failed:", error);
@@ -137,15 +141,19 @@ export default function DashboardPage() {
                 condition: item.condition,
                 sellPrice: item.sellPrice,
                 quantity: item.quantity || 1,
+                photoUrl: (item as any).photoUrl || null,
               },
             }),
           });
 
           if (response.ok) {
-            await updateDoc(doc(db, "inventory", item.sku), {
-              status: "listed",
-              updatedAt: new Date(),
-            });
+            await updateDoc(
+              doc(db, "inventory", (item as any).id || item.sku),
+              {
+                status: "listed",
+                updatedAt: new Date(),
+              },
+            );
             successCount++;
             totalCardsSync += item.quantity || 1;
             console.log(
